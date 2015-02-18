@@ -1,0 +1,6 @@
+grains:
+{% for k,v in pillar.iteritems() %}
+{% if k.startswith("usm_") %}
+  {{ k }}: {{ v }}
+{% endif %}
+{% endfor %}
