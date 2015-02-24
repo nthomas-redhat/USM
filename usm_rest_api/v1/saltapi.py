@@ -5,15 +5,27 @@ import re
 
 import salt
 from salt import wheel
+import salt.client
 
-_SETUP_MINION = ('mv -f /etc/salt/minion /etc/salt/minion.usm-add-node && '
-                 'echo "master: %s" > /etc/salt/minion && '
-                 'service salt-minion restart' % socket.getfqdn())
+_SETUP_MINION_TEMPLATE = \
+'''mv -f /etc/salt/minion /etc/salt/minion.usm-add-node &&
+echo "master: %s
+include:
+  - /etc/usm/cluster" > /etc/salt/minion &&
+service salt-minion restart'''
+
+_SETUP_GRAINS_TEMPLATE = '''mkdir -p /etc/usm &&
+echo "grains:
+  usm_cluster_name: %s
+  usm_cluster_uuid: %s
+  usm_cluster_type: %s
+  usm_filesystem_type: %s" > /etc/usm/cluster'''
 
 paramiko.util.get_logger('paramiko').setLevel(logging.ERROR)
 
 opts = salt.config.master_config('/etc/salt/master')
 master = salt.wheel.WheelClient(opts)
+local = salt.client.LocalClient()
 
 
 def get_fingerprint(key):
@@ -64,13 +76,22 @@ class HostKeyMatchPolicy(paramiko.AutoAddPolicy):
                                        self.expected_fingerprint)
 
 
-def setup_minion(host, fingerprint, username, password):
+def setup_minion(host, fingerprint, username, password, cluster={}):
+    cmd = ""
+    if cluster:
+        cmd = _SETUP_GRAINS_TEMPLATE % (cluster['cluster-name'],
+                                        cluster['cluster-uuid'],
+                                        cluster['cluster-type'],
+                                        cluster['filesystem-type'])
+        cmd += " &&"
+    cmd += _SETUP_MINION_TEMPLATE % socket.gethostbyname(socket.getfqdn())
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(HostKeyMatchPolicy(fingerprint))
     client.connect(host, username=username, password=password)
 
     session = client.get_transport().open_session()
-    session.exec_command(_SETUP_MINION)
+    session.exec_command(cmd)
     stdin = session.makefile('wb')
     stdout = session.makefile('rb')
     stderr = session.makefile_stderr('rb')
@@ -107,3 +128,14 @@ def accept_minion(minion):
 def get_minions():
     keys = master.call_func('key.list_all')
     return keys['minions']
+
+
+def update_cluster_config(indict):
+    nodeList = [socket.gethostbyaddr(d['management-ip-address'])[0]
+                for d in indict['nodes']]
+    local.cmd(nodeList, 'state.sls', ['cluster'],
+              kwarg={'pillar': {
+                  "usm_cluster_name": indict['cluster-name'],
+                  "usm_cluster_uuid": indict['cluster-uuid'],
+                  "usm_cluster_type": indict['cluster-type'],
+                  "usm_filesystem_type": indict['filesystem-type']}})
