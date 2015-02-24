@@ -97,13 +97,13 @@ class UnknownMinion(Exception):
 def accept_minion(minion):
     minion_id = socket.gethostbyaddr(minion)[0]
 
-    keys = master.cmd('key.list_all')
+    keys = master.call_func('key.list_all')
     if minion_id not in keys['minions_pre']:
         raise UnknownMinion(minion, minion_id)
 
-    return master.cmd('key.accept', match=minion_id)
+    return master.call_func('key.accept', match=minion_id)
 
 
 def get_minions():
-    keys = master.cmd('key.list_all')
+    keys = master.call_func('key.list_all')
     return keys['minions']

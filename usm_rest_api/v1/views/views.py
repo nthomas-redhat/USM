@@ -22,6 +22,9 @@ from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
 
+from celery import shared_task
+
+
 from usm_rest_api.v1.serializers.serializers import UserSerializer
 from usm_rest_api.models import Cluster
 from usm_rest_api.v1.serializers.serializers import ClusterSerializer
@@ -138,20 +141,22 @@ message as follows:
     ]
 }
     """
+    data = request.data.copy()
+    jobId = createCluster.delay(data)
+    return Response(str(jobId), status=200) 
+
+
+@shared_task
+def createCluster(postdata):
     ##create the cluster configuration
     ##Setup the minions on each of the nodes and push the cluster configuration
     ##create the cluster(ex peer probe for gluster)
     ##Update the database
-    
-    #print request.data
-    postdata = request.data.copy()
-    #resultdata = request.data.copy()
     nodelist = postdata['nodes']
     del postdata['nodes']
     
      #create the cluster
     postdata['cluster_id'] = uuid.uuid4()
-    #print postdata
     clusterSerilaizer = ClusterSerializer(data=postdata)
     if clusterSerilaizer.is_valid():
         #print clusterSerilaizer.validated_data
@@ -183,10 +188,8 @@ message as follows:
         except Exception, e:
             transaction.rollback()
             print str(e)
-
-    return Response({'message': 'Success'}, status=201)
-
-
+    
+    
 class UserViewSet(viewsets.ModelViewSet):
     """
     User account information.
@@ -211,12 +214,10 @@ class ClusterViewSet(viewsets.ModelViewSet):
     
     
     def create(self, request):
-        print request.data
         postdata = request.POST.copy()
         postdata['cluster_id'] = uuid.uuid4()
         clusterSerilaizer = ClusterSerializer(data=postdata)
         if clusterSerilaizer.is_valid():
-            print clusterSerilaizer.validated_data
             clusterSerilaizer.save()
             return Response(clusterSerilaizer.data, status=201)
         return Response(clusterSerilaizer.errors, status=400)
@@ -230,28 +231,34 @@ class HostViewSet(viewsets.ModelViewSet):
     serializer_class = HostSerializer
     
     def create(self, request):
-        ssh_fingerprint = saltapi.get_fingerprint(saltapi.get_host_ssh_key(request.data['host_ip']))
-        saltapi.setup_minion(request.data['host_ip'],
-                                   ssh_fingerprint,
-                                   request.data['ssh_username'], request.data['ssh_password'])
-        time.sleep( 1 )
-        saltapi.accept_minion(socket.gethostbyaddr(request.data['host_ip'])[0])
-
-        #
-        #TODO Get the host uuid from  host and update in DB
-        #
-        hostSerilaizer = HostSerializer(data=request.data)
-        if hostSerilaizer.is_valid():
-            
-            #Delete all the fields those are not reqired to be persisted
-            del hostSerilaizer.validated_data['ssh_password']
-            del hostSerilaizer.validated_data['ssh_key_fingerprint']
-            del hostSerilaizer.validated_data['ssh_username']
-            del hostSerilaizer.validated_data['ssh_port']
-            
-            hostSerilaizer.save()
-            return Response(hostSerilaizer.data, status=201)
-        return Response(hostSerilaizer.errors, status=400)
+        data = request.POST.copy()
+        jobId = createHost.delay(data)
+        return Response(str(jobId), status=200)
    
-
+@shared_task
+def createHost(data):
+    #Setup the host communication
+    ssh_fingerprint = saltapi.get_fingerprint(saltapi.get_host_ssh_key(data['management_ip']))
+    saltapi.setup_minion(data['management_ip'],ssh_fingerprint,data['ssh_username'], data['ssh_password'])
+    time.sleep( 1 )
+    saltapi.accept_minion(socket.gethostbyaddr(data['management_ip'])[0])
+    
+    #Now persist the host in to DB
+    #
+    #TODO Get the host uuid from  host and update in DB
+    #
+    data['node_id'] = uuid.uuid4()
+    hostSerilaizer = HostSerializer(data=data)
+    if hostSerilaizer.is_valid():
+        #Delete all the fields those are not reqired to be persisted
+        del hostSerilaizer.validated_data['ssh_password']
+        del hostSerilaizer.validated_data['ssh_key_fingerprint']
+        del hostSerilaizer.validated_data['ssh_username']
+        del hostSerilaizer.validated_data['ssh_port']
+        #Save the instance to DB
+        hostSerilaizer.save()
+    else:
+       print "Error........." 
+       print hostSerilaizer.errors 
+        
 

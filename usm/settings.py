@@ -39,6 +39,7 @@ INSTALLED_APPS = (
     'django_extensions',
     'usm_rest_api',
     'rest_framework',
+    'djcelery',
 )
 
 MIDDLEWARE_CLASSES = (
@@ -90,6 +91,18 @@ REST_FRAMEWORK = {
     ],
     
 }
+
+# CELERY SETTINGS
+BROKER_URL = 'redis://127.0.0.1:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_IMPORTS=("usm_rest_api.v1.views.views")
+CELERY_RESULT_BACKEND = 'redis://127.0.0.1/0'
+
+import djcelery
+djcelery.setup_loader()
+
 # Internationalization
 # https://docs.djangoproject.com/en/1.7/topics/i18n/
 
