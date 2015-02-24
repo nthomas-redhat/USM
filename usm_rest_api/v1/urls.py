@@ -12,5 +12,6 @@ urlpatterns = patterns('',
                        url(r'^auth/login', v1_views.login),
                        url(r'^auth/logout', v1_views.logout),
                        url(r'^utils/get_ssh_fingerprint/(.*)/$', v1_views.get_ssh_fingerprint),
-                        url(r'^', include(router.urls)),
+                       url(r'^create_cluster', v1_views.create_cluster),
+                       url(r'^', include(router.urls)),
                       )

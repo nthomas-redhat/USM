@@ -50,7 +50,7 @@ class ClusterSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Cluster
-        fields = ('cluster_id', 'name', 'description', 'compatibility_version', 'cluster_type', 'storage_type', 'cluster_status')
+        fields = ('cluster_id', 'cluster_name', 'description', 'compatibility_version', 'cluster_type', 'storage_type', 'cluster_status')
   
         
 class HostSerializer(serializers.ModelSerializer):
@@ -69,7 +69,7 @@ class HostSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Host
-        fields = ('host_id', 'host_name', 'description', 'host_ip', 'host_unique_id',
-                  'cluster', 'ssh_username', 'ssh_port', 'ssh_key_fingerprint',
-                  'ssh_password','host_type')
+        fields = ('node_id', 'node_name', 'description', 'management_ip',
+                  'cluster_ip','public_ip', 'cluster', 'ssh_username',
+                  'ssh_port', 'ssh_key_fingerprint', 'ssh_password','node_type')
     

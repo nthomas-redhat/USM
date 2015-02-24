@@ -1,5 +1,7 @@
 import time
 import socket
+import uuid
+
 
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -8,6 +10,8 @@ from django.contrib.auth import authenticate, login as auth_login, logout as aut
 from django.contrib.auth.models import User
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django_extensions.db.fields import UUIDField
+
 
 from rest_framework.decorators import api_view
 from rest_framework.decorators import permission_classes
@@ -105,6 +109,84 @@ remote host:
     return Response({'ssh_key_fingerprint': ssh_fingerprint}, status=200)
 
 
+@api_view(['POST'])
+@permission_classes((IsAuthenticated,))
+def create_cluster(request):
+    """
+The resource is used to create a cluster with a list of hosts by posting a
+message as follows:
+
+    {
+    "cluster_name": "NAME",
+    "cluster_type": "TYPE",
+    "storage_type": "FSTYPE",
+    "nodes": [
+        {
+            "node-name": "NAME",
+            "management_ip": "ADDR",
+            "cluster_ip": "ADDR",
+            "public_ip": "ADDR",
+            "ssh_username": "USER",
+            "ssh_password": "PASS",
+            "ssh_key_fingerprint": "FINGER",
+            "ssh_port": 22,
+            "node_type": "nodetype"
+        },
+        {
+            
+        }
+    ]
+}
+    """
+    ##create the cluster configuration
+    ##Setup the minions on each of the nodes and push the cluster configuration
+    ##create the cluster(ex peer probe for gluster)
+    ##Update the database
+    
+    #print request.data
+    postdata = request.data.copy()
+    #resultdata = request.data.copy()
+    nodelist = postdata['nodes']
+    del postdata['nodes']
+    
+     #create the cluster
+    postdata['cluster_id'] = uuid.uuid4()
+    #print postdata
+    clusterSerilaizer = ClusterSerializer(data=postdata)
+    if clusterSerilaizer.is_valid():
+        #print clusterSerilaizer.validated_data
+        clusterSerilaizer.save()
+        #transaction.commit()
+    else:
+            print "Error........." 
+            print clusterSerilaizer.errors
+   
+    #Create the Nodes in the cluster
+    for node in nodelist:
+        node['node_id'] = uuid.uuid4()
+        node['cluster'] = str(postdata['cluster_id'])
+        hostSerilaizer = HostSerializer(data=node)   
+        try:
+            if hostSerilaizer.is_valid():
+                #Delete all the fields those are not reqired to be persisted
+                del hostSerilaizer.validated_data['ssh_password']
+                del hostSerilaizer.validated_data['ssh_key_fingerprint']
+                del hostSerilaizer.validated_data['ssh_username']
+                del hostSerilaizer.validated_data['ssh_port']
+                
+                hostSerilaizer.save()
+                #transaction.commit()
+                #return Response(hostSerilaizer.data, status=201)
+            else:
+               print "Error........." 
+               print hostSerilaizer.errors
+        except Exception, e:
+            transaction.rollback()
+            print str(e)
+
+    return Response({'message': 'Success'}, status=201)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     """
     User account information.
@@ -126,6 +208,18 @@ class ClusterViewSet(viewsets.ModelViewSet):
     """
     queryset = Cluster.objects.all()
     serializer_class = ClusterSerializer
+    
+    
+    def create(self, request):
+        print request.data
+        postdata = request.POST.copy()
+        postdata['cluster_id'] = uuid.uuid4()
+        clusterSerilaizer = ClusterSerializer(data=postdata)
+        if clusterSerilaizer.is_valid():
+            print clusterSerilaizer.validated_data
+            clusterSerilaizer.save()
+            return Response(clusterSerilaizer.data, status=201)
+        return Response(clusterSerilaizer.errors, status=400)
 
 
 class HostViewSet(viewsets.ModelViewSet):
@@ -157,7 +251,7 @@ class HostViewSet(viewsets.ModelViewSet):
             
             hostSerilaizer.save()
             return Response(hostSerilaizer.data, status=201)
-        return Response(serializer.errors, status=400)
+        return Response(hostSerilaizer.errors, status=400)
    
 
 
