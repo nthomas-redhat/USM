@@ -79,10 +79,10 @@ class HostKeyMatchPolicy(paramiko.AutoAddPolicy):
 def setup_minion(host, fingerprint, username, password, cluster={}):
     cmd = ""
     if cluster:
-        cmd = _SETUP_GRAINS_TEMPLATE % (cluster['cluster-name'],
-                                        cluster['cluster-uuid'],
-                                        cluster['cluster-type'],
-                                        cluster['filesystem-type'])
+        cmd = _SETUP_GRAINS_TEMPLATE % (cluster['cluster_name'],
+                                        cluster['cluster_id'],
+                                        cluster['cluster_type'],
+                                        cluster['storage_type'])
         cmd += " &&"
     cmd += _SETUP_MINION_TEMPLATE % socket.gethostbyname(socket.getfqdn())
 

@@ -103,6 +103,58 @@ CELERY_RESULT_BACKEND = 'redis://127.0.0.1/0'
 import djcelery
 djcelery.setup_loader()
 
+
+#LOGGING CONFIGURATION
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': "%(asctime)s - %(levelname)s - %(name)s %(message)s"
+        }
+    },
+    'handlers': {
+        'django_logging': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'logs/usm.log',
+            'maxBytes': 1024*1024*5, #5MB
+            "backupCount": 10,
+            'formatter': 'standard'
+        },
+        'request_logging': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'logs/usm_request.log',
+            'maxBytes': 1024*1024*5, #5MB
+            "backupCount": 10,
+            'formatter': 'standard'
+        },
+        'db_logging': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'logs/usm_db.log',
+            'maxBytes': 1024*1024*5, #5MB
+            "backupCount": 10,
+            'formatter': 'standard'
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['django_logging'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['request_logging'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.db': {
+            'handlers': ['db_logging'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    }
+}
+
 # Internationalization
 # https://docs.djangoproject.com/en/1.7/topics/i18n/
 
