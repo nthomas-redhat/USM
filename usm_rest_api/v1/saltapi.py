@@ -139,3 +139,9 @@ def update_cluster_config(indict):
                   "usm_cluster_uuid": indict['cluster-uuid'],
                   "usm_cluster_type": indict['cluster-type'],
                   "usm_filesystem_type": indict['filesystem-type']}})
+
+
+def peer(gluster_node, new_node):
+    gluster_node_name = socket.gethostbyaddr(gluster_node)[0]
+    new_node_name =  socket.gethostbyaddr(new_node)[0]
+    return local.cmd(gluster_node_name, 'glusterfs.peer', [new_node_name])
