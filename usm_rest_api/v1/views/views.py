@@ -147,21 +147,25 @@ message as follows:
     """
     log.debug("Inside create_cluster. Request Data: %s" % request.data )
     data = request.data.copy()
-    jobId = createCluster.delay(data)
+    #
+    #TODO:Check the type of the cluster to be created and call appropriate task
+    #
+    #create gluster cluster
+    jobId = createGlusterCluster.delay(data)
     log.debug("Exiting create_cluster JobID: %s" % jobId)
     return Response(str(jobId), status=200) 
 
 
 @shared_task
-def createCluster(postdata):
-    log.debug("Inside createCluster Async Task")
+def createGlusterCluster(postdata):
+    log.debug("Inside createGlusterCluster Async Task")
     failedNodes=[]
     nodelist = postdata['nodes']
     noOfNodes = len(nodelist)
     del postdata['nodes']
     
      #create the cluster
-    createCluster.update_state(state='CREATE_CLUSTER')
+    createGlusterCluster.update_state(state='CREATE_CLUSTER')
     postdata['cluster_id'] = uuid.uuid4()
     try:
         clusterSerilaizer = ClusterSerializer(data=postdata)
@@ -170,7 +174,6 @@ def createCluster(postdata):
         else:
                 log.error("Cluster Creation failed. Invalid clusterSerilaizer")
                 log.error("clusterSerilaizer Err: %s" % clusterSerilaizer.errors)
-                #createCluster.update_state(state='FAILURE',meta=clusterSerilaizer.errors)
                 return {'status':'CLUSTER_CREATION_FAILURE','error':clusterSerilaizer.errors}
     except Exception, e:
         log.exception(e)
@@ -178,7 +181,7 @@ def createCluster(postdata):
    
     #Create the Nodes in the cluster
     #Setup the host communication channel
-    createCluster.update_state(state='ESTABLISH_HOST_COMMUNICATION')
+    createGlusterCluster.update_state(state='ESTABLISH_HOST_COMMUNICATION')
     for node in nodelist[:]:
         try:
             ssh_fingerprint = saltapi.get_fingerprint(
@@ -196,7 +199,7 @@ def createCluster(postdata):
     #Sleep for sometime to make sure all the restarted minions are back
     #online
     log.debug("Accepting the minions keys" )
-    createCluster.update_state(state='ADD_MINION_KEYS')
+    createGlusterCluster.update_state(state='ADD_MINION_KEYS_AND_DB_UPDATE')
     time.sleep( 3 )
     #Accept the keys of the successful minions and add to the DB
     for node in nodelist[:]:
@@ -223,8 +226,6 @@ def createCluster(postdata):
                 del hostSerilaizer.validated_data['ssh_port']
                 
                 hostSerilaizer.save()
-                #transaction.commit()
-                #return Response(hostSerilaizer.data, status=201)
             else:
                log.error("Host Creation failed. Invalid hostSerilaizer")
                log.error("hostSerilaizer Err: %s" % hostSerilaizer.errors)
@@ -239,7 +240,7 @@ def createCluster(postdata):
         
     #Now create the cluster
     log.debug("peer probe start" )
-    createCluster.update_state(state='PEER_PROBE')
+    createGlusterCluster.update_state(state='PEER_PROBE')
     #
     #Wait for some time so that the communication chanel is ready
     #
@@ -256,14 +257,11 @@ def createCluster(postdata):
     
     log.debug("Failed Nodes %s" %  failedNodes)
     if noOfNodes == len(failedNodes):
-        #createCluster.update_state(state='ALL_FAILURE',meta={'nodes':failedNodes})
         return {'status':'ALL_NODES_FAILURE','failednodes':str(failedNodes)}
     elif len(failedNodes)>0:
-        #createCluster.update_state(state='PARTIAL_FAILURE',meta={'nodes':failedNodes})
         return {'status':'PARTIAL_FAILURE','failednodes':str(failedNodes)}
-    else:
-        #createCluster.update_state(state='SUCCESS')
-        return states.SUCCESS
+    
+    return states.SUCCESS
     
     
 class UserViewSet(viewsets.ModelViewSet):
@@ -290,14 +288,22 @@ class ClusterViewSet(viewsets.ModelViewSet):
     
     
     def create(self, request):
+        log.debug("Inside ClusterViewSet Create. Request Data: %s" % request.data )
         postdata = request.POST.copy()
         postdata['cluster_id'] = uuid.uuid4()
-        clusterSerilaizer = ClusterSerializer(data=postdata)
-        if clusterSerilaizer.is_valid():
-            clusterSerilaizer.save()
-            return Response(clusterSerilaizer.data, status=201)
-        return Response(clusterSerilaizer.errors, status=400)
-
+        try:
+            clusterSerilaizer = ClusterSerializer(data=postdata)
+            if clusterSerilaizer.is_valid():
+                clusterSerilaizer.save()
+            else:
+                log.error("Cluster Creation failed. Invalid clusterSerilaizer")
+                log.error("clusterSerilaizer Err: %s" % clusterSerilaizer.errors)
+                return Response(clusterSerilaizer.errors, status=400)
+        except Exception, e:
+            log.exception(e)   
+            return Response(clusterSerilaizer.errors, status=400)
+        
+        return Response(clusterSerilaizer.data, status=201)
 
 class HostViewSet(viewsets.ModelViewSet):
     """
@@ -307,34 +313,59 @@ class HostViewSet(viewsets.ModelViewSet):
     serializer_class = HostSerializer
     
     def create(self, request):
+        log.debug("Inside HostViewSet Create. Request Data: %s" % request.data )
         data = request.POST.copy()
-        jobId = createHost.delay(data)
+         #
+        #TODO:Check the type of the host to be created and call appropriate task
+        #
+        #Create a host and add to gluster cluster
+        jobId = createGlusterHost.delay(data)
+        log.debug("Exiting ... JobID: %s" % jobId)
         return Response(str(jobId), status=200)
    
 @shared_task
-def createHost(data):
+def createGlusterHost(data):
+    log.debug("Inside createGlusterHost Async Task")
     #Setup the host communication
-    ssh_fingerprint = saltapi.get_fingerprint(saltapi.get_host_ssh_key(data['management_ip']))
-    saltapi.setup_minion(data['management_ip'],ssh_fingerprint,data['ssh_username'], data['ssh_password'])
-    time.sleep( 1 )
-    saltapi.accept_minion(socket.gethostbyaddr(data['management_ip'])[0])
-    
-    #Now persist the host in to DB
-    #
-    #TODO Get the host uuid from  host and update in DB
-    #
-    data['node_id'] = uuid.uuid4()
-    hostSerilaizer = HostSerializer(data=data)
-    if hostSerilaizer.is_valid():
-        #Delete all the fields those are not reqired to be persisted
-        del hostSerilaizer.validated_data['ssh_password']
-        del hostSerilaizer.validated_data['ssh_key_fingerprint']
-        del hostSerilaizer.validated_data['ssh_username']
-        del hostSerilaizer.validated_data['ssh_port']
-        #Save the instance to DB
-        hostSerilaizer.save()
-    else:
-       print "Error........." 
-       print hostSerilaizer.errors 
+    try:
+        createGlusterHost.update_state(state='ESTABLISH_HOST_COMMUNICATION')
+        ssh_fingerprint = saltapi.get_fingerprint(saltapi.get_host_ssh_key(data['management_ip']))
+        rc,out,err = saltapi.setup_minion(data['management_ip'],
+                                          ssh_fingerprint,
+                                          data['ssh_username'],
+                                          data['ssh_password'])
+        if rc!=0:
+                raise Exception("Accept Minion Failed", rc,out,err)
+        #Sleep for sometime to make sure all the restarted minions are back
+        #online
+        createGlusterHost.update_state(state='ADD_MINION_KEYS_AND_DB_UPDATE')
+        time.sleep( 3 )
+        log.debug("Accepting the minions keys" )
+        saltapi.accept_minion(socket.gethostbyaddr(data['management_ip'])[0])
         
+        #Now persist the host in to DB
+        #
+        #TODO Get the host uuid from  host and update in DB
+        #
+        data['node_id'] = uuid.uuid4()
+        hostSerilaizer = HostSerializer(data=data)
+        if hostSerilaizer.is_valid():
+            #Delete all the fields those are not reqired to be persisted
+            del hostSerilaizer.validated_data['ssh_password']
+            del hostSerilaizer.validated_data['ssh_key_fingerprint']
+            del hostSerilaizer.validated_data['ssh_username']
+            del hostSerilaizer.validated_data['ssh_port']
+            #Save the instance to DB
+            hostSerilaizer.save()
+        #
+        #TODO:Now get nodes belongs to the cluster and peerprobe
+        #
+        else:
+            log.error("Host Creation failed. Invalid hostSerilaizer")
+            log.error("hostSerilaizer Err: %s" % hostSerilaizer.errors)
+            return {'status':'HOST_CREATION_FAILURE','error':clusterSerilaizer.errors}
+    except Exception, e:
+        log.exception(e)
+        return {'status':'HOST_CREATION_FAILURE','error':str(e)}
+    return states.SUCCESS
 
