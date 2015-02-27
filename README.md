@@ -1,28 +1,45 @@
 USM is an application that manages Ceph and Gluster
 
-REQUIREMENTS:
+REQUIREMENTS
+------------
 
 python >= 2.7
+
 django-celery==3.1.16
+
 django-extensions==1.5.0
+
 django-filter==0.9.2
+
 djangorestframework==3.0.5
+
 celery==3.1.17
+
 Django==1.7.5
+
 paramiko=1.15.1
+
 redis = 2.8.18
+
 python-redis=2.10.3
+
 salt-master =2014.7.1
 
 postgresql93=9.3.6
+
 postgresql93-server=9.3.6
+
 postgresql93-contrib=9.3.6
+
 postgresql93-libs=9.3.6
+
 postgresql93-devel=9.3.6
+
 psycopg2=2.6(This needs to installed after postgress installation)
 
-SETUP:
 
+SETUP
+------
 
 Initialize the DB
 -----------------
@@ -32,10 +49,10 @@ Configure PostgreSQL to accept network connection
 -------------------------------------------------
 open /var/lib/pgsql/data/pg_hba.conf
 Locate: 127.0.0.1/32 and ::1/128 and allow "password" authentication for IPv4 and IPv6 connections. For example
-# IPv4 local connections:
-host    all             all             127.0.0.1/32            password
-# IPv6 local connections:
-host    all             all             ::1/128                 password
+
+"host    all             all             127.0.0.1/32            password"
+
+"host    all             all             ::1/128                 password"
 
 Enable and start the postgresSQL service
 ----------------------------------------
