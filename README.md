@@ -57,55 +57,75 @@ Locate: 127.0.0.1/32 and ::1/128 and allow "password" authentication for IPv4 an
 Enable and start the postgresSQL service
 ----------------------------------------
 systemctl enable postgresql-9.3
+
 systemctl start postgresql-9.3
 
 Create the Database,User and grant privileges
 ---------------------------------------------
 login to postgres  - sudo su - postgres
+
 create database - createdb usm
+
 create user - createuser -P usm
+
 go to the SQL prompt - psql
+
 Grant the db privileges newly created user - GRANT ALL PRIVILEGES ON DATABASE usm TO usm
 
 Start the salt service
 ----------------------
 systemctl enable salt-master
+
 systemctl start salt-master
 
 Setup the USM App
 -----------------
 clone the Repo - https://github.com/nthomas-redhat/USM
+
 create the logs directory - mkdir /var/log/usm
 
 create and migrate the DB -
+
 python manage.py makemigrations
+
 python manage.py migrate
 
 Create the superuser -
+
 python manage.py createsuperuser
 
 Firewall configuration
 ----------------------
 Make sure all the required ports are unblocked - ports 4505-4506/tcp for salt and the one usm app is listening on
+
 firewall-cmd --permanent --zone=FedoraWorkstation or FedoraServer --add-port=4505-4506/tcp  FOR SALT
+
 firewall-cmd --permanent --zone=FedoraWorkstation or FedoraServer --add-port=<HTTP PORT>/tcp  FOR HTTP
 
 Celery Setup
 ------------
 Enable and start redis -
+
 systemctl enable redis
+
 systemctl start redis
 
-Configure the celery environment - 
+Configure the celery environment -
+
 Open celery/default/celeryd and update below variables to point to USM HOME DIRECTORY
+
 CELERYD_CHDIR="USM_HOME_DIRECTORY"
+
 DJANGO_PROJECT_DIR="USM_HOME_DIRECTORY"
 
 Copy the init and config files -
+
 cp celery/default/celeryd /etc/default
+
 cp celery/init.d/celeryd /etc/init.d
 
 Create the logs directory - mkdir -p -m 2755 /var/log/celery
+
 Start the celery service - service celery start
 
 Starting the USM Application
@@ -113,4 +133,5 @@ Starting the USM Application
 python manage.py runserver <IPAddress>:<PORT>
 
 Access the usm application using -
+
 http://<IPADDRESS>:<PORT>/
