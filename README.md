@@ -134,4 +134,4 @@ python manage.py runserver <IPAddress>:<PORT>
 
 Access the usm application using -
 
-http://<IPADDRESS>:<PORT>/
+http://IPADDRESS:PORT/
