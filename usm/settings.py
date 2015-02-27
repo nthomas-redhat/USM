@@ -116,21 +116,21 @@ LOGGING = {
     'handlers': {
         'django_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/usm.log',
+            'filename': '/var/log/usm/usm.log',
             'maxBytes': 1024*1024*5, #5MB
             "backupCount": 10,
             'formatter': 'standard'
         },
         'request_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/usm_request.log',
+            'filename': '/var/log/usm/usm_request.log',
             'maxBytes': 1024*1024*5, #5MB
             "backupCount": 10,
             'formatter': 'standard'
         },
         'db_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/usm_db.log',
+            'filename': '/var/log/usm/usm_db.log',
             'maxBytes': 1024*1024*5, #5MB
             "backupCount": 10,
             'formatter': 'standard'

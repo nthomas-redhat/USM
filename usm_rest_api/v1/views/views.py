@@ -210,7 +210,7 @@ def createGlusterCluster(postdata):
         node['cluster'] = str(postdata['cluster_id'])
         try:
             saltapi.accept_minion(socket.gethostbyaddr(node['management_ip'])[0])
-        except UnknownMinion, e:
+        except Exception, e:
             log.exception(e)
             #Delete the node from list to avoid peer probing
             nodelist.remove(node)
