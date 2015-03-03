@@ -67,3 +67,143 @@ def peer(gluster_node, new_node):
         return True
     else:
         return False
+
+
+import ConfigParser
+from netaddr import IPNetwork, IPAddress
+import os
+
+_CEPH_CLUSTER_CONF_DIR = '/srv/salt/usm/conf/ceph'
+
+_ceph_authtool = utils.CommandPath("ceph-authtool",
+                                   "/usr/bin/ceph-authtool",)
+
+_monmaptool = utils.CommandPath("monmaptool",
+                                "/usr/bin/monmaptool",)
+
+
+def _gen_ceph_cluster_conf(cluster_name, fsid, monitors, cluster_dir,
+                           osd_journal_size = 1024,
+                           osd_pool_default_size = 2,
+                           osd_pool_default_min_size = 1,
+                           osd_pool_default_pg_num = 333,
+                           osd_pool_default_pgp_num = 333,
+                           osd_crush_chooseleaf_type = 1):
+    def _get_subnet(ip_address, subnets):
+        ip = IPAddress(ip_address)
+        for subnet in subnets:
+            if ip in IPNetwork(subnet):
+                return subnet
+        return ''
+
+    conf_file = cluster_dir + '/' + cluster_name + '.conf'
+
+    mon_initial_members = []
+    mon_host = []
+    public_network = []
+    cluster_network = []
+
+    out = local.cmd(monitors, 'network.subnets', expr_form='list')
+
+    for m,v in monitors.iteritems():
+        mon_initial_members.append(v.get('monitor_name',
+                                         utils.get_short_hostname(m)))
+        mon_host.append(v['public_ip'])
+        public_network.append(_get_subnet(v['public_ip'], out.get(m, [])))
+        cluster_network.append(_get_subnet(v['cluster_ip'], out.get(m, [])))
+
+    config = ConfigParser.RawConfigParser()
+    config.add_section('global')
+    config.set('global', 'fsid', fsid)
+    config.set('global', 'mon initial members', ', '.join(mon_initial_members))
+    config.set('global', 'mon host', ', '.join(mon_host))
+    config.set('global', 'public network', ', '.join(public_network))
+    config.set('global', 'cluster network', ', '.join(cluster_network))
+    config.set('global', 'auth cluster required', 'cephx')
+    config.set('global', 'auth service required', 'cephx')
+    config.set('global', 'auth client required', 'cephx')
+    config.set('global', 'osd journal size', osd_journal_size)
+    config.set('global', 'filestore xattr use omap', 'true')
+    config.set('global', 'osd pool default size', osd_pool_default_size)
+    config.set('global', 'osd pool default min size',
+               osd_pool_default_min_size)
+    config.set('global', 'osd pool default pg num', osd_pool_default_pg_num)
+    config.set('global', 'osd pool default pgp num', osd_pool_default_pgp_num)
+    config.set('global', 'osd crush chooseleaf type',
+               osd_crush_chooseleaf_type)
+
+    with open(conf_file, 'wb') as f:
+        config.write(f)
+
+    return mon_initial_members, mon_host, public_network, cluster_network
+
+
+def _gen_keys(cluster_name, mon_initial_members, mon_host, fsid, cluster_dir):
+    mon_key_path = cluster_dir + '/mon.key'
+    admin_key_path = cluster_dir + '/client.admin.keyring'
+    mon_map_path = cluster_dir + '/mon.map'
+
+    utils.execCmd([_ceph_authtool.cmd, '--create-keyring', mon_key_path,
+                   '--gen-key', '-n', 'mon.', '--cap', 'mon', 'allow *'])
+
+    utils.execCmd([_ceph_authtool.cmd, '--create-keyring', admin_key_path,
+                   '--gen-key', '-n', 'client.admin', '--set-uid=0', '--cap',
+                   'mon', 'allow *', '--cap', 'osd', 'allow *', '--cap',
+                   'mds', 'allow'])
+
+    utils.execCmd([_ceph_authtool.cmd, mon_key_path, '--import-keyring',
+                   admin_key_path])
+
+    cmd = [_monmaptool.cmd, '--create', '--clobber']
+    for i in range(0, len(mon_initial_members)):
+        cmd += ['--add', mon_initial_members[i], mon_host[i]]
+    cmd += ['--fsid', fsid, mon_map_path]
+    utils.execCmd(cmd)
+
+    return mon_key_path, admin_key_path, mon_map_path
+
+
+def setup_ceph_cluster(cluster_name, fsid, monitors):
+    '''
+    :: cluster_name = STRING
+    :: fsid = UUID
+    :: monitors = {MINION_ID: {'public_ip': IP_ADDRESS,
+                               'cluster_ip': IP_ADDRESS,
+                               'monitor_name': NAME}, ...}
+    '''
+    cluster_dir = _CEPH_CLUSTER_CONF_DIR + '/' + cluster_name
+    if not os.path.exists(cluster_dir):
+        os.makedirs(cluster_dir)
+
+    rv = _gen_ceph_cluster_conf(cluster_name, fsid, monitors, cluster_dir)
+
+    mon_initial_members = rv[0]
+    mon_host = rv[1]
+
+    rv = _gen_keys(cluster_name, mon_initial_members, mon_host, fsid,
+                   cluster_dir)
+
+    cluster_info = dict(zip(monitors, mon_initial_members))
+    cluster_info.update({'cluster_name': cluster_name})
+    pillar = {'usm': cluster_info}
+
+    out = local.cmd(monitors, 'state.sls', ['setup_ceph_cluster'],
+                    expr_form='list',
+                    kwarg={'pillar': pillar})
+
+    success_minions = []
+    failed_minions = []
+
+    for minion in monitors:
+        for state_out in out.get(minion, {}).values():
+            for id,result in state_out.iteritems():
+                if 'sysvinit' in id and result and result['result']:
+                    success_minions.append(minion)
+        else:
+            failed_minions.append(minion)
+
+    ## rexecCmd("service ceph --cluster %s start mon.%s" % (
+    ##     cluster_name, mon_initial_members[i]),
+    ##          mons[i])
+
+    return success_minions, failed_minions
