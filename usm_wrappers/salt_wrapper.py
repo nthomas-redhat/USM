@@ -11,6 +11,26 @@ master = salt.wheel.WheelClient(opts)
 local = salt.client.LocalClient()
 
 
+def _get_state_result(out):
+    failed_minions = {}
+    for minion, v in out.iteritems():
+        failed_results = {}
+        for id, res in v:
+            if not res['result']:
+                failed_results.update({id: res})
+        else:
+            failed_minions[minion] = {}
+        if failed_results:
+            failed_minions[minion] = failed_results
+
+    return failed_minions
+
+
+def run_state(local, tgt, state, *args, **kwargs):
+    out = local.cmd(tgt, 'state.sls', [state], *args, **kwargs)
+    return _get_state_result(out)
+
+
 def get_minions():
     keys = master.call_func('key.list_all')
     return keys['minions'], keys['minions_pre']
@@ -173,30 +193,24 @@ def setup_ceph_cluster(cluster_name, fsid, monitors):
     mon_initial_members = rv[0]
     mon_host = rv[1]
 
-    rv = _gen_keys(cluster_name, mon_initial_members, mon_host, fsid,
-                   cluster_dir)
+    _gen_keys(cluster_name, mon_initial_members, mon_host, fsid, cluster_dir)
 
     cluster_info = dict(zip(monitors, mon_initial_members))
     cluster_info.update({'cluster_name': cluster_name})
     pillar = {'usm': cluster_info}
 
-    out = local.cmd(monitors, 'state.sls', ['setup_ceph_cluster'],
-                    expr_form='list',
-                    kwarg={'pillar': pillar})
+    return run_state(local, monitors, 'setup_ceph_cluster', expr_form='list',
+                     kwarg={'pillar': pillar})
 
-    success_minions = []
-    failed_minions = []
 
-    for minion in monitors:
-        for state_out in out.get(minion, {}).values():
-            for id,result in state_out.iteritems():
-                if 'sysvinit' in id and result and result['result']:
-                    success_minions.append(minion)
-        else:
-            failed_minions.append(minion)
+def start_ceph_mon(cluster_name = None, monitors = []):
+    if cluster_name:
+        tgt = 'G@usm_cluster_name:%s and G@usm_node_type:mon' % (cluster_name)
+        expr_form = 'compound'
+    elif monitors:
+        tgt = monitors
+        expr_form = 'list'
+    else:
+        return
 
-    ## rexecCmd("service ceph --cluster %s start mon.%s" % (
-    ##     cluster_name, mon_initial_members[i]),
-    ##          mons[i])
-
-    return success_minions, failed_minions
+    return run_state(local, tgt, 'start_ceph_mon', expr_form=expr_form)
