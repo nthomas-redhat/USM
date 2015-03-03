@@ -1,0 +1,48 @@
+#!/bin/bash
+
+function quiet_abort()
+{
+    ec=$1
+    shift
+    msg=$1
+    shift
+    out=$(mktemp setup-minion.out.XXXXXXXX)
+    err=$(mktemp setup-minion.err.XXXXXXXX)
+    "$@" 1>$out 2>$err
+    rc=$(echo $?)
+    if [ "$rc" -ne 0 ]; then
+        echo "command: $@" >&2
+        echo "rc: $rc" >&2
+        echo "stderr: $(cat $err)" >&2
+        echo "stdout: $(cat $out)" >&2
+        echo $msg
+        rm -f $out $err
+        exit $ec
+    else
+        rm -f $out $err
+        return $rc
+    fi
+}
+
+function abort()
+{
+    ec=$1
+    shift
+    echo "$@"
+    exit $ec
+}
+
+quiet_abort 1 'failed to create /etc/usm' mkdir -p /etc/usm
+quiet_abort 2 'failed to take backup /etc/salt/minion' mv -f /etc/salt/minion /etc/salt/minion.usm-add-node
+echo -e "master: {{ usm_master }}\ninclude:\n  - /etc/usm/cluster" > /etc/salt/minion || abort 3 'failed to create minion configuration /etc/salt/minion'
+quiet_abort 4 'failed to remove /etc/salt/pki/minion/minion_master.pub' rm -f /etc/salt/pki/minion/minion_master.pub
+
+if which systemctl >/dev/null 2>&1; then
+    quiet_abort 5 'failed to enable salt-minion' systemctl enable salt-minion
+    quiet_abort 6 'failed to restart salt-minion' systemctl restart salt-minion
+    quiet_abort 7 'failed to start salt-minion' systemctl status salt-minion
+else
+    quiet_abort 5 'failed to enable salt-minion' chkconfig salt-minion on
+    quiet_abort 6 'failed to restart salt-minion' service salt-minion restart
+    quiet_abort 7 'failed to start salt-minion' service salt-minion status
+fi
