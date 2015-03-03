@@ -34,27 +34,20 @@ def get_machine_id(minion_id):
     return out.get(minion_id, {}).get('machine_id')
 
 
-def setup_cluster_grains(minions, cluster_info, reload=True):
-    out = local.cmd(minions, 'state.sls', ['setup_cluster_grains'],
-                    expr_form='list',
-                    kwarg={'pillar': {'usm': cluster_info}})
+def setup_cluster_grains(minions, cluster_info):
+    grains = {}
+    for k, v in cluster_info.iteritems():
+        grains['usm_' + k] = v
 
-    success_minions = []
-    failed_minions = []
+    out = local.cmd(minions, 'grains.setvals', [grains],
+                    expr_form='list')
 
-    for minion in minions:
-        result = out.get(minion, {}).values()
-        if result and result[0]['result']:
-            success_minions.append(minion)
-        else:
-            failed_minions.append(minion)
-
-    if reload:
-        out = local.cmd(success_minions, 'saltutil.sync_grains',
-                        expr_form='list')
-        success = out.keys()
-        failed_minions.append(set(success_minions) - set(success))
-        success_minions = success
+    minions_set = set(minions)
+    failed_minions = minions_set - set(out)
+    for k, v in out.iteritems():
+        if not v:
+            failed_minions.add(k)
+    success_minions = minions_set - failed_minions
 
     return success_minions, failed_minions
 

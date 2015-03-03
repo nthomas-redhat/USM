@@ -34,7 +34,7 @@ function abort()
 
 quiet_abort 1 'failed to create /etc/usm' mkdir -p /etc/usm
 quiet_abort 2 'failed to take backup /etc/salt/minion' mv -f /etc/salt/minion /etc/salt/minion.usm-add-node
-echo -e "master: {{ usm_master }}\ninclude:\n  - /etc/usm/cluster" > /etc/salt/minion || abort 3 'failed to create minion configuration /etc/salt/minion'
+echo "master: {{ usm_master }}" > /etc/salt/minion || abort 3 'failed to create minion configuration /etc/salt/minion'
 quiet_abort 4 'failed to remove /etc/salt/pki/minion/minion_master.pub' rm -f /etc/salt/pki/minion/minion_master.pub
 
 if which systemctl >/dev/null 2>&1; then

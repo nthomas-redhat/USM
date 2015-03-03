@@ -1,6 +1,15 @@
 {% if pillar.get('usm') %}
 {% set cluster_name = pillar['usm']['cluster_name'] %}
 {% set mon_name = pillar['usm'][grains['id']] %}
+
+usm_node_type:
+  grains.present:
+    - value: mon
+
+usm_mon_name:
+  grains.present:
+    - value: {{ mon_name }}
+
 /etc/ceph/{{ cluster_name }}.conf:
   file.managed:
     - source: salt://usm/conf/ceph/{{ cluster_name }}/{{ cluster_name }}.conf
