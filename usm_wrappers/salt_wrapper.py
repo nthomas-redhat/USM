@@ -62,14 +62,8 @@ def setup_cluster_grains(minions, cluster_info):
     out = local.cmd(minions, 'grains.setvals', [grains],
                     expr_form='list')
 
-    minions_set = set(minions)
-    failed_minions = minions_set - set(out)
-    for k, v in out.iteritems():
-        if not v:
-            failed_minions.add(k)
-    success_minions = minions_set - failed_minions
-
-    return success_minions, failed_minions
+    failed_minions = set(minions) - set(out)
+    return set([k for k, v in out.iteritems() if not v]).union(failed_minions)
 
 
 def peer(gluster_node, new_node):
