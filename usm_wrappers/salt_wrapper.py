@@ -15,10 +15,10 @@ def _get_state_result(out):
     failed_minions = {}
     for minion, v in out.iteritems():
         failed_results = {}
-        for id, res in v:
+        for id, res in v.iteritems():
             if not res['result']:
                 failed_results.update({id: res})
-        else:
+        if not v:
             failed_minions[minion] = {}
         if failed_results:
             failed_minions[minion] = failed_results

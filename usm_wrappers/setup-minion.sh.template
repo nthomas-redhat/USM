@@ -40,9 +40,11 @@ quiet_abort 4 'failed to remove /etc/salt/pki/minion/minion_master.pub' rm -f /e
 if which systemctl >/dev/null 2>&1; then
     quiet_abort 5 'failed to enable salt-minion' systemctl enable salt-minion
     quiet_abort 6 'failed to restart salt-minion' systemctl restart salt-minion
+    sleep 3 ## lets wait the minion to start
     quiet_abort 7 'failed to start salt-minion' systemctl status salt-minion
 else
     quiet_abort 5 'failed to enable salt-minion' chkconfig salt-minion on
     quiet_abort 6 'failed to restart salt-minion' service salt-minion restart
+    sleep 3 ## lets wait the minion to start
     quiet_abort 7 'failed to start salt-minion' service salt-minion status
 fi
