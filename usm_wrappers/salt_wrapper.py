@@ -31,6 +31,18 @@ def run_state(local, tgt, state, *args, **kwargs):
     return _get_state_result(out)
 
 
+def pull_minion_file(local, minion, minion_path, path):
+    out = local.cmd(minion, 'file.grep', [minion_path, '.'])
+
+    result = out.get(minion, {})
+    if result and result['retcode'] == 0:
+        with open(path, 'wb') as f:
+            f.write(result['stdout'])
+        return True
+    else:
+        return False
+
+
 def get_minions():
     keys = master.call_func('key.list_all')
     return keys['minions'], keys['minions_pre']
@@ -178,7 +190,11 @@ def setup_ceph_cluster(cluster_name, fsid, monitors):
                                'cluster_ip': IP_ADDRESS,
                                'monitor_name': NAME}, ...}
     '''
+    cluster_key_file = cluster_name + '.keyring'
+    bootstrap_osd_key_file = '/var/lib/ceph/bootstrap-osd/' + cluster_key_file
     cluster_dir = _CEPH_CLUSTER_CONF_DIR + '/' + cluster_name
+    cluster_key_path = cluster_dir + '/' + cluster_key_file
+
     if not os.path.exists(cluster_dir):
         os.makedirs(cluster_dir)
 
@@ -193,8 +209,16 @@ def setup_ceph_cluster(cluster_name, fsid, monitors):
     cluster_info.update({'cluster_name': cluster_name})
     pillar = {'usm': cluster_info}
 
-    return run_state(local, monitors, 'setup_ceph_cluster', expr_form='list',
-                     kwarg={'pillar': pillar})
+    out = run_state(local, monitors, 'setup_ceph_cluster', expr_form='list',
+                    kwarg={'pillar': pillar})
+    if out:
+        return out
+
+    if pull_minion_file(local, monitors[0], bootstrap_osd_key_file,
+                        cluster_key_path):
+        return {}
+    else:
+        return {monitors[0]: {}}
 
 
 def start_ceph_mon(cluster_name = None, monitors = []):
