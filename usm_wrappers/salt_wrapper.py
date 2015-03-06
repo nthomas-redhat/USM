@@ -232,3 +232,14 @@ def start_ceph_mon(cluster_name = None, monitors = []):
         return
 
     return run_state(local, tgt, 'start_ceph_mon', expr_form=expr_form)
+
+
+def add_ceph_osd(osds):
+    '''
+    :: osds = {MINION_ID: {DEVICE: FSTYPE, ...}, ...}
+
+    '''
+
+    pillar = {'usm': osds}
+    return run_state(local, osds, 'add_ceph_osd', expr_form='list',
+                     kwarg={'pillar': pillar})
