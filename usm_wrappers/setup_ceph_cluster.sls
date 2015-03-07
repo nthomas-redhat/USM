@@ -1,10 +1,16 @@
 {% if pillar.get('usm') %}
-{% set cluster_name = pillar['usm']['cluster_name'] %}
-{% set mon_name = pillar['usm'][grains['id']] %}
+{% set this_node = grains['id'] %}
+{% set cluster_name = pillar['usm'][this_node]['cluster_name'] %}
+{% set mon_id = pillar['usm'][this_node]['mon_id'] %}
+{% set mon_name = pillar['usm'][this_node]['mon_name'] %}
 
 usm_node_type:
   grains.present:
     - value: mon
+
+usm_mon_id:
+  grains.present:
+    - value: {{ mon_id }}
 
 usm_mon_name:
   grains.present:
@@ -46,7 +52,7 @@ usm_mon_name:
     - makedirs: True
     - show_diff: False
 
-/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_name }}:
+/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}:
   file.directory:
     - user: root
     - group: root
@@ -55,21 +61,27 @@ usm_mon_name:
 
 populate-monitor:
   cmd.run:
-    - name: ceph-mon --cluster {{ cluster_name }} --mkfs -i {{ mon_name }} --monmap /etc/ceph/{{ cluster_name }}.mon.map --keyring /etc/ceph/{{ cluster_name }}.mon.key
+    - name: ceph-mon --cluster {{ cluster_name }} --mkfs -i {{ mon_id }} --monmap /etc/ceph/{{ cluster_name }}.mon.map --keyring /etc/ceph/{{ cluster_name }}.mon.key
     - require:
       - file: /etc/ceph/{{ cluster_name }}.conf
       - file: /etc/ceph/{{ cluster_name }}.client.admin.keyring
       - file: /etc/ceph/{{ cluster_name }}.mon.key
       - file: /etc/ceph/{{ cluster_name }}.mon.map
-      - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_name }}
+      - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}
 
-/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_name }}/done:
+/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}/done:
   file.touch:
   - require:
     - cmd: populate-monitor
 
-/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_name }}/sysvinit:
+/var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}/sysvinit:
   file.touch:
   - require:
-    - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_name }}/done
+    - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}/done
+
+start_ceph_mon:
+  cmd.run:
+    - name: service ceph --cluster {{ cluster_name }} start mon.{{ mon_id }}
+    - require:
+      - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}/sysvinit
 {% endif %}
