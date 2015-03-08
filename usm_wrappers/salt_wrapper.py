@@ -2,6 +2,7 @@ import socket
 from jinja2 import Template
 import salt
 from salt import wheel, client
+from netaddr import IPNetwork, IPAddress
 
 import utils
 
@@ -66,6 +67,22 @@ def get_machine_id(minion_id):
     return out.get(minion_id, {}).get('machine_id')
 
 
+def get_minion_network_info(minions):
+    out = local.cmd(minions, ['grains.item', 'network.subnets'],
+                    [['ipv4', 'ipv6'], []], expr_form='list')
+    netinfo = {}
+    for minion in minions:
+        info = out.get(minion)
+        if info:
+            netinfo[minion] = {'ipv4': info['grains.item']['ipv4'],
+                               'ipv6': info['grains.item']['ipv6'],
+                               'subnet': info['network.subnets']}
+        else:
+            netinfo[minion] = {'ipv4': [], 'ipv6': [], 'subnet': []}
+
+    return netinfo
+
+
 def setup_cluster_grains(minions, cluster_info):
     grains = {}
     for k, v in cluster_info.iteritems():
@@ -76,6 +93,48 @@ def setup_cluster_grains(minions, cluster_info):
 
     failed_minions = set(minions) - set(out)
     return set([k for k, v in out.iteritems() if not v]).union(failed_minions)
+
+
+def check_minion_networks(minions, public_network=None, cluster_network=None,
+                          check_cluster_network=False):
+    '''
+    :: minions = {MINION_ID: {'public_ip': IP_ADDRESS,
+                              'cluster_ip': IP_ADDRESS}, ...}
+    '''
+
+    def _get_ip_network(ip, subnets):
+        for subnet in subnets:
+            network = IPNetwork(subnet)
+            if ip in network:
+                return network
+
+    def _check_ip_network(minion, ip, ip_list, network, subnets,
+                          label='public'):
+        if ip not in ip_list:
+            raise ValueError('%s ip %s not found in minion %s' %
+                             (label, ip, minion))
+        ip = IPAddress(ip)
+        if not network:
+            network = _get_ip_network(ip, subnets)
+        if network and ip not in network:
+            raise ValueError('minion %s %s ip %s not in network %s' %
+                             (m, ip, label, network))
+        return network
+
+    netinfo = get_minion_network_info(minions)
+    for m,v in minions.iteritems():
+        public_network = _check_ip_network(m, v['public_ip'],
+                                           netinfo[m]['ipv4'],
+                                           public_network,
+                                           netinfo[m]['subnet'])
+        if not check_cluster_network:
+            continue
+        cluster_network = _check_ip_network(m, v['cluster_ip'],
+                                            netinfo[m]['ipv4'],
+                                            cluster_network,
+                                            netinfo[m]['subnet'])
+
+    return public_network, cluster_network
 
 
 def peer(gluster_node, new_node):
@@ -89,12 +148,12 @@ def peer(gluster_node, new_node):
 
 
 import ConfigParser
-from netaddr import IPNetwork, IPAddress
 import os
 import string
 
 _CEPH_CLUSTER_CONF_DIR = '/srv/salt/usm/conf/ceph'
 _MON_ID_LIST = list(string.ascii_lowercase)
+_DEFAULT_MON_PORT = 6789
 
 _ceph_authtool = utils.CommandPath("ceph-authtool",
                                    "/usr/bin/ceph-authtool",)
@@ -103,10 +162,17 @@ _monmaptool = utils.CommandPath("monmaptool",
                                 "/usr/bin/monmaptool",)
 
 
-def _gen_ceph_cluster_conf(cluster_name, fsid, monitors,
+def _config_add_monitors(config, monitors):
+    for m, v in monitors.iteritems():
+        section = 'mon.' + m
+        config.add_section(section)
+        config.set(section, 'host', v['name'])
+        config.set(section, 'mon addr',
+                   '%s:%s' % (v['address'], v.get('port', _DEFAULT_MON_PORT)))
+
+
+def _gen_ceph_cluster_conf(conf_file, cluster_name, fsid, monitors,
                            public_network,
-                           cluster_network,
-                           cluster_dir,
                            osd_journal_size = 1024,
                            osd_pool_default_size = 2,
                            osd_pool_default_min_size = 1,
@@ -117,14 +183,11 @@ def _gen_ceph_cluster_conf(cluster_name, fsid, monitors,
     :: monitors = {ID: {'name': SHORT_HOSTNAME, 'address': IP_ADDR,
                         'port': INT}, ...}
     '''
-
-    conf_file = cluster_dir + '/' + cluster_name + '.conf'
     config = ConfigParser.RawConfigParser()
 
     config.add_section('global')
     config.set('global', 'fsid', fsid)
     config.set('global', 'public network', public_network)
-    config.set('global', 'cluster network', cluster_network)
     config.set('global', 'auth cluster required', 'cephx')
     config.set('global', 'auth service required', 'cephx')
     config.set('global', 'auth client required', 'cephx')
@@ -140,17 +203,10 @@ def _gen_ceph_cluster_conf(cluster_name, fsid, monitors,
 
     config.add_section('mon')
     config.set('mon', 'mon initial members', ', '.join(monitors))
-
-    for m, v in monitors.iteritems():
-        section = 'mon.' + m
-        config.add_section(section)
-        config.set(section, 'host', v['name'])
-        config.set(section, 'mon addr',
-                   '%s:%s' % (v['address'], v.get('port', 6789)))
+    _config_add_monitors(config, monitors)
 
     with open(conf_file, 'wb') as f:
         config.write(f)
-
     return True
 
 
@@ -183,6 +239,27 @@ def _gen_keys(cluster_name, fsid, monitors, cluster_dir):
     return True
 
 
+def _get_mon_id_map(unused_mon_ids, minions):
+    mon_id_map = dict(zip(unused_mon_ids, minions))
+    monitors = {}
+    for id, minion in mon_id_map.iteritems():
+        monitors[id] = {
+            'name': minions[minion].get('monitor_name',
+                                        utils.get_short_hostname(minion)),
+            'address': minions[minion]['public_ip']
+        }
+    return mon_id_map, monitors
+
+
+def _add_ceph_mon_pillar_data(mon_id_map, cluster_name, monitors):
+    pillar_data = {}
+    for id, minion in mon_id_map.iteritems():
+        pillar_data[minion] = {'cluster_name': cluster_name, 'mon_id': id,
+                               'mon_name': monitors[id]['name'],
+                               'public_ip': monitors[id]['address']}
+    return pillar_data
+
+
 def setup_ceph_cluster(cluster_name, fsid, minions):
     '''
     :: cluster_name = STRING
@@ -191,77 +268,97 @@ def setup_ceph_cluster(cluster_name, fsid, minions):
                               'cluster_ip': IP_ADDRESS,
                               'monitor_name': NAME}, ...}
     '''
+    public_network, cluster_network = check_minion_networks(minions)
+    mon_id_map, monitors = _get_mon_id_map(_MON_ID_LIST, minions)
+
     cluster_dir = _CEPH_CLUSTER_CONF_DIR + '/' + cluster_name
+    if not os.path.exists(cluster_dir):
+        os.makedirs(cluster_dir)
+
+    conf_file = cluster_dir + '/' + cluster_name + '.conf'
+    _gen_ceph_cluster_conf(conf_file, cluster_name, fsid, monitors,
+                           public_network)
+
+    _gen_keys(cluster_name, fsid, monitors, cluster_dir)
+
+    pillar_data = _add_ceph_mon_pillar_data(mon_id_map, cluster_name, monitors)
+    pillar = {'usm': pillar_data}
+
+    bootstrapped_minion = None
+    for id, minion in mon_id_map.iteritems():
+        out = run_state(local, minion, 'add_ceph_mon',
+                        kwarg={'pillar':
+                               {'usm': {'mon_bootstrap': True,
+                                        minion: pillar_data[minion]}}})
+        if not out:
+            bootstrapped_minion = minion
+            break
+
+    if not bootstrapped_minion:
+        ## TODO: cleanup created dir/files
+        print "bootstraped_minion is empty"
+        return False
+
     cluster_key_file = cluster_name + '.keyring'
     bootstrap_osd_key_file = '/var/lib/ceph/bootstrap-osd/' + cluster_key_file
     cluster_key_path = cluster_dir + '/' + cluster_key_file
 
-    public_network = None
-    cluster_network = None
+    if not pull_minion_file(local, bootstrapped_minion, bootstrap_osd_key_file,
+                            cluster_key_path):
+        print "pull_minion_file fails"
+        ## mon failed to start
+        return False
 
-    if not os.path.exists(cluster_dir):
-        os.makedirs(cluster_dir)
+    minion_set = set(minions)
+    minion_set.remove(bootstrapped_minion)
+    if minion_set:
+        rv = run_state(local, minion_set, 'add_ceph_mon', expr_form='list',
+                       kwarg={'pillar': pillar})
+        if rv:
+            raise Exception('add_ceph_mon state failed somewhere')
+    return True
 
-    out = local.cmd(minions, 'network.subnets', expr_form='list')
 
-    for m,v in minions.iteritems():
-        if not out[m]:
-            raise ValueError('%s: failed to get subnet' % m)
+def add_ceph_mon(cluster_name, minions):
+    conf_file = (_CEPH_CLUSTER_CONF_DIR + '/' + cluster_name + '/' +
+                 cluster_name + '.conf')
+    config = ConfigParser.RawConfigParser()
+    config.read(conf_file)
 
-        public_ip = IPAddress(v['public_ip'])
-        cluster_ip = IPAddress(v['cluster_ip'])
+    public_network = IPNetwork(config.get('global', 'public network'))
+    check_minion_networks(minions, public_network)
 
-        for subnet in out[m]:
-            network = IPNetwork(subnet)
-            if public_ip in network:
-                if public_network and public_network != subnet:
-                    raise KeyError(
-                        'minion %s:%s is in different public network %s' % (
-                            m, public_ip, subnet))
-                else:
-                    public_network = subnet
+    used_mon_ids = set([id.strip() for id in config.get(
+        'mon', 'mon initial members').split(',')])
+    unused_mon_ids = list(set(_MON_ID_LIST) - used_mon_ids)
+    unused_mon_ids.sort()
 
-            if cluster_ip in network:
-                if cluster_network and cluster_network != subnet:
-                    raise KeyError(
-                        'minion %s:%s is in different cluster network %s' % (
-                            m, cluster_ip, subnet))
-                else:
-                    cluster_network = subnet
+    mon_id_map, monitors = _get_mon_id_map(unused_mon_ids, minions)
 
-    mon_id_map = dict(zip(_MON_ID_LIST, minions))
-    monitors = {}
-    for id, minion in mon_id_map.iteritems():
-        monitors[id] = {
-            'name': minions[minion].get('monitor_name',
-                                        utils.get_short_hostname(minion)),
-            'address': minions[minion]['public_ip']
-        }
+    mon_initial_members = list(used_mon_ids) + list(monitors)
+    mon_initial_members.sort()
+    config.set('mon', 'mon initial members', ', '.join(mon_initial_members))
 
-    _gen_ceph_cluster_conf(cluster_name, fsid, monitors, public_network,
-                           cluster_network, cluster_dir)
-    _gen_keys(cluster_name, fsid, monitors, cluster_dir)
+    _config_add_monitors(config, monitors)
 
-    d = {}
-    for id, minion in mon_id_map.iteritems():
-        d[minion] = {'cluster_name': cluster_name, 'mon_id': id,
-                     'mon_name': monitors[id]['name']}
-    pillar = {'usm': d}
+    with open(conf_file, 'wb') as f:
+        config.write(f)
 
-    out = run_state(local, minions, 'setup_ceph_cluster', expr_form='list',
+    pillar_data = _add_ceph_mon_pillar_data(mon_id_map, cluster_name, monitors)
+    pillar = {'usm': pillar_data}
+
+    out = run_state(local, minions, 'add_ceph_mon', expr_form='list',
                     kwarg={'pillar': pillar})
     if out:
         return out
 
-    out = {}
-    for minion in minions:
-        if pull_minion_file(local, minion, bootstrap_osd_key_file,
-                            cluster_key_path):
-            return {}
-        else:
-            out[minion] = {}
-
-    return out
+    out = local.cmd(minions,
+                    'state.single',
+                    ['file.managed', '/etc/ceph/%s.conf' % cluster_name,
+                     'source=salt://usm/conf/ceph/%s/%s.conf' % (
+                         cluster_name, cluster_name),
+                     'show_diff=False'])
+    return _get_state_result(out)
 
 
 def start_ceph_mon(cluster_name = None, monitors = []):

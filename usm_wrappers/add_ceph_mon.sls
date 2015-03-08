@@ -3,6 +3,8 @@
 {% set cluster_name = pillar['usm'][this_node]['cluster_name'] %}
 {% set mon_id = pillar['usm'][this_node]['mon_id'] %}
 {% set mon_name = pillar['usm'][this_node]['mon_name'] %}
+{% set public_ip = pillar['usm'][this_node]['public_ip'] %}
+{% set port = pillar['usm'][this_node].get('port') %}
 
 usm_node_type:
   grains.present:
@@ -84,4 +86,12 @@ start_ceph_mon:
     - name: service ceph --cluster {{ cluster_name }} start mon.{{ mon_id }}
     - require:
       - file: /var/lib/ceph/mon/{{ cluster_name }}-{{ mon_id }}/sysvinit
+
+{% if not pillar['usm'].get('mon_bootstrap') %}
+add-monitor:
+  cmd.run:
+    - name: ceph --cluster {{ cluster_name }} mon add {{ mon_id }} {{ public_ip }}
+    - require:
+      - cmd: start_ceph_mon
+{% endif %}
 {% endif %}
