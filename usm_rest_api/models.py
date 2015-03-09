@@ -66,6 +66,13 @@ class Host(models.Model):
         (HOST_TYPE_GLUSTER, _('Gluster Host')),
     )
     
+    HOST_STATUS_INACTIVE = 1
+    HOST_STATUS_ACTIVE = 2
+    HOST_STATUS_CHOICES = (
+        (HOST_STATUS_INACTIVE, _('Inactive')),
+        (HOST_STATUS_ACTIVE, _('Active')),
+    )
+    
     node_id = UUIDField(auto=False, primary_key=True)
     node_name = models.CharField(max_length=40)
     description = models.CharField(
@@ -75,7 +82,9 @@ class Host(models.Model):
     public_ip = models.CharField(max_length=255)
     cluster = models.ForeignKey(Cluster)
     node_type = models.SmallIntegerField(choices=HOST_TYPE_CHOICES)
-    
+    node_status = models.SmallIntegerField(
+        choices=HOST_STATUS_CHOICES, blank=True, null=True,
+        default=HOST_STATUS_INACTIVE)
     created = models.DateTimeField(auto_now_add=True)
     last_modified = models.DateTimeField(auto_now=True)
     
