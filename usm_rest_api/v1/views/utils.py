@@ -84,7 +84,6 @@ def setup_transport_and_update_db(cluster_data, nodelist):
 
     # Create the Nodes in the cluster
     # Setup the host communication channel
-    # current_task.update_state(state='ESTABLISH_HOST_COMMUNICATION')
     minionIds = {}
     for node in nodelist:
         try:
@@ -103,7 +102,6 @@ def setup_transport_and_update_db(cluster_data, nodelist):
     # salt to make sure that the channel is ready for sending the commands
     time.sleep(ACCEPT_MINION_TIMEOUT)
     log.debug("Accepting the minions keys")
-    # current_task.update_state(state='ADD_MINION_KEYS_AND_DB_UPDATE')
 
     # Accept the keys of the successful minions and add to the DB
     for node in nodelist:
@@ -151,7 +149,6 @@ def setup_transport_and_update_db(cluster_data, nodelist):
 
     # Push the cluster configuration to nodes
     log.debug("Push Cluster config to Nodes")
-    # current_task.update_state(state='PUSH_CLUSTER_CONFIG')
     failed_minions = salt_wrapper.setup_cluster_grains(
         minionIds.values(), cluster_data)
     if failed_minions:

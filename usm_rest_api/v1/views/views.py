@@ -215,7 +215,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class HostViewSet(viewsets.ModelViewSet):
     """
-    Cluster information.
+    Host information.
     """
     queryset = Host.objects.all()
     serializer_class = HostSerializer

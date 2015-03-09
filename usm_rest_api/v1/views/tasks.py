@@ -25,18 +25,19 @@ def createCephCluster(cluster_data):
         noOfNodes = len(nodelist)
         del cluster_data['nodes']
 
+    # Return from here if nodelist is empty
+    if noOfNodes == 0:
+        log.info("Node List is empty, Cluster creation failed")
+        return {
+            'status': 'CLUSTER_CREATION_FAILURE',
+            'error': "Node List is empty, Cluster creation failed"}
+
     # create the cluster
     try:
-        current_task.update_state(state='CREATE_CLUSTER')
         usm_rest_utils.create_cluster(cluster_data)
     except Exception, e:
         log.exception(e)
         return {'status': 'CLUSTER_CREATION_FAILURE', 'error': str(e)}
-
-    # Return from here if nodelist is empty
-    if noOfNodes == 0:
-        log.info("Created Empty Cluster %s" % cluster_data)
-        return states.SUCCESS
 
     # Setup the host communication and update the DB
     current_task.update_state(state='ESTABLISH_HOST_COMMUNICATION')
@@ -108,18 +109,19 @@ def createGlusterCluster(cluster_data):
         noOfNodes = len(nodelist)
         del cluster_data['nodes']
 
+    # Return from here if nodelist is empty
+    if noOfNodes == 0:
+        log.info("Node List is empty, Cluster creation failed")
+        return {
+            'status': 'CLUSTER_CREATION_FAILURE',
+            'error': "Node List is empty, Cluster creation failed"}
+
     # create the cluster
     try:
-        current_task.update_state(state='CREATE_CLUSTER')
         usm_rest_utils.create_cluster(cluster_data)
     except Exception, e:
         log.exception(e)
         return {'status': 'CLUSTER_CREATION_FAILURE', 'error': str(e)}
-
-    # Return from here if nodelist is empty
-    if noOfNodes == 0:
-        log.info("Created Empty Cluster %s" % cluster_data)
-        return states.SUCCESS
 
     # Setup the host communication and update the DB
     current_task.update_state(state='ESTABLISH_HOST_COMMUNICATION')
@@ -127,7 +129,7 @@ def createGlusterCluster(cluster_data):
         cluster_data, nodelist)
 
     log.debug("peer probe start")
-    current_task.update_state(state='PEER_PROBE')
+    current_task.update_state(state='SETUP_GLUSTER_CLUSTER')
     #
     # Do the peer probe  and cluster config only for successful nodes
     #
@@ -173,7 +175,7 @@ def createGlusterCluster(cluster_data):
 
 @shared_task
 def createCephHost(data):
-    log.debug("Inside createGlusterHost Async Task %s" % data)
+    log.debug("Inside createCephHost Async Task %s" % data)
     cluster = None
     cluster_data = None
     hostlist = None
