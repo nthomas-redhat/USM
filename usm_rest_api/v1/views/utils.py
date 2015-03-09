@@ -29,10 +29,11 @@ HOST_TYPE_MIXED = 3
 HOST_TYPE_GLUSTER = 4
 HOST_STATUS_INACTIVE = 1
 HOST_STATUS_ACTIVE = 2
+ACCEPT_MINION_TIMEOUT = 3
+CONFIG_PUSH_TIMEOUT = 15
 
 
-def peer(hostlist, newNode):
-    rc = False
+def add_gluster_host(hostlist, newNode):
     if hostlist:
         host = random.choice(hostlist)
 
@@ -98,7 +99,9 @@ def setup_transport_and_update_db(cluster_data, nodelist):
     log.debug(minionIds)
     # Sleep for sometime to make sure all the restarted minions are back
     # online
-    time.sleep(3)
+    # TODO - Sleep will be removed from here. Need to look at the events from
+    # salt to make sure that the channel is ready for sending the commands
+    time.sleep(ACCEPT_MINION_TIMEOUT)
     log.debug("Accepting the minions keys")
     # current_task.update_state(state='ADD_MINION_KEYS_AND_DB_UPDATE')
 
@@ -113,8 +116,9 @@ def setup_transport_and_update_db(cluster_data, nodelist):
     log.debug(minionIds)
     #
     # Wait for some time so that the communication chanel is ready
-    #
-    time.sleep(15)
+    # TODO - Sleep will be removed from here. Need to look at the events from
+    # salt to make sure that the channel is ready for sending the commands
+    time.sleep(CONFIG_PUSH_TIMEOUT)
 
     # Persist the hosts into DB
     for node in nodelist:
@@ -175,39 +179,69 @@ def update_cluster_status(cluster_id, status):
 
 
 def create_ceph_cluster(nodelist, cluster_data, minionIds):
-    # create the dictionary for cluster creation
-    failedNodes = None
-    minions = {}
-    for node in nodelist:
-        nodeInfo = {'public_ip': node['public_ip'],
-                    'cluster_ip': node['cluster_ip']}
-        minions[minionIds[node['management_ip']]] = nodeInfo
-    log.debug("cluster_name %s" % cluster_data['cluster_name'])
-    log.debug("cluster_id %s" % cluster_data['cluster_id'])
-    log.debug("minions %s" % minions)
-    try:
-        out = salt_wrapper.setup_ceph_cluster(
-            cluster_data['cluster_name'], cluster_data['cluster_id'], minions)
-        # Should we return failure from here?
-        # Need to discuss and figure out how to handle the error here
-        if not out:
-            raise Exception("Ceph Cluster creation Failed")
-    except Exception, e:
-        log.exception(e)
-        # Should we return failure from here?
-        return False, _map_failed_nodes(failedNodes, nodelist, minionIds)
+    status = True
+    if nodelist:
+        minions = {}
+        for node in nodelist:
+            nodeInfo = {'public_ip': node['public_ip'],
+                        'cluster_ip': node['cluster_ip']}
+            minions[minionIds[node['management_ip']]] = nodeInfo
+        log.debug("cluster_name %s" % cluster_data['cluster_name'])
+        log.debug("cluster_id %s" % cluster_data['cluster_id'])
+        log.debug("minions %s" % minions)
+        try:
+            status = salt_wrapper.setup_ceph_cluster(
+                cluster_data['cluster_name'],
+                cluster_data['cluster_id'],
+                minions)
+            return status
+        except Exception, e:
+            log.exception(e)
+            # Should we return failure from here?
+            return False
 
-    # Start the mons
-    try:
-        failedNodes = salt_wrapper.start_ceph_mon(
-            cluster_data['cluster_name'])
-        log.debug("failedNodes %s" % failedNodes)
-    except Exception, e:
-        log.exception(e)
-        # Should we return failure from here?
-        return False, _map_failed_nodes(failedNodes, nodelist, minionIds)
+    return status
 
-    return True, _map_failed_nodes(failedNodes, nodelist, minionIds)
+
+def add_ceph_osds(nodelist, cluster_data, minionIds):
+    failedNodes = []
+    if nodelist:
+        for node in nodelist:
+            nodeInfo = {'public_ip': node['public_ip'],
+                        'cluster_ip': node['cluster_ip'],
+                        'devices': {'/dev/vdb': 'xfs'}}  # harcoded for now
+            log.debug("cluster_name %s" % cluster_data['cluster_name'])
+            try:
+                failed = salt_wrapper.add_ceph_osd(
+                    cluster_data['cluster_name'],
+                    {minionIds[node['management_ip']]: nodeInfo})
+                if failed:
+                    log.debug("Failed:" % failed)
+                    failedNodes += _map_failed_nodes(
+                        failed, nodelist, minionIds)
+            except Exception, e:
+                log.exception(e)
+                failedNodes.append(node)
+
+    return failedNodes
+
+
+def add_ceph_monitors(nodelist, cluster_data, minionIds):
+    failedNodes = []
+    if nodelist:
+        for node in nodelist:
+            nodeInfo = {'public_ip': node['public_ip']}
+            try:
+                failed = salt_wrapper.add_ceph_mon(
+                    cluster_data['cluster_name'],
+                    {minionIds[node['management_ip']]: nodeInfo})
+                if failed:
+                    failedNodes += _map_failed_nodes(
+                        failed, nodelist, minionIds)
+            except Exception, e:
+                log.exception(e)
+                failedNodes.append(node)
+    return failedNodes
 
 
 def create_gluster_cluster(nodelist):
@@ -219,16 +253,15 @@ def create_gluster_cluster(nodelist):
             if rc is False:
                 log.critical("Peer Probe Failed for node %s" % node)
                 failedNodes.append(node)
-
-    return True, failedNodes
+    return failedNodes
 
 
 def _map_failed_nodes(failed, nodelist, minionIds):
     failedNodes = []
     if failed:
-        if failed['minion']:
-            failedlist = failed['minion'].keys()
-            for node in nodelist:
-                if minionIds[node['management_ip']] in failedlist:
-                    failedNodes.append(node)
+        log.debug("Failed:" % failed)
+        failedlist = failed.keys()
+        for node in nodelist:
+            if minionIds[node['management_ip']] in failedlist:
+                failedNodes.append(node)
     return failedNodes

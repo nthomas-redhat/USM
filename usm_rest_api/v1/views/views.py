@@ -24,6 +24,7 @@ from usm_rest_api.v1.serializers.serializers import HostSerializer
 
 from usm_wrappers import utils as usm_wrapper_utils
 
+from usm_rest_api.v1.views import utils as usm_rest_utils
 from usm_rest_api.v1.views import tasks
 
 
@@ -179,7 +180,20 @@ class ClusterViewSet(viewsets.ModelViewSet):
 
         log.debug("Inside Cluster Create. Request Data: %s" % request.data)
         data = copy.deepcopy(request.data.copy())
-        jobId = tasks.setupCluster.delay(data)
+        log.debug(data)
+        jobId = None
+        #
+        # Check the type of the cluster to be created and call appropriate task
+        #
+        log.debug(data['cluster_type'])
+        log.debug(usm_rest_utils.CLUSTER_TYPE_GLUSTER)
+        if data['cluster_type'] == usm_rest_utils.CLUSTER_TYPE_GLUSTER:
+            log.debug("Gluster cluster create")
+            jobId = tasks.createGlusterCluster.delay(data)
+        else:
+            log.debug("Ceph cluster create")
+            jobId = tasks.createCephCluster.delay(data)
+
         log.debug("Exiting create_cluster JobID: %s" % jobId)
         return Response(str(jobId), status=201)
 
@@ -210,6 +224,16 @@ class HostViewSet(viewsets.ModelViewSet):
         log.debug(
             "Inside HostViewSet Create. Request Data: %s" % request.data)
         data = copy.deepcopy(request.data.copy())
-        jobId = tasks.createHost.delay(data)
+        jobId = None
+        #
+        # Check the type of the host to be created and call appropriate task
+        #
+        if data['node_type'] == usm_rest_utils.HOST_TYPE_GLUSTER:
+            # Create a host and add to gluster cluster
+            jobId = tasks.createGlusterHost.delay(data)
+        else:
+            # Create a node and add to the Ceph Cluster
+            jobId = tasks.createCephHost.delay(data)
+
         log.debug("Exiting ... JobID: %s" % jobId)
         return Response(str(jobId), status=201)
