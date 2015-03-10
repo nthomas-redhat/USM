@@ -39,6 +39,7 @@ def pull_minion_file(local, minion, minion_path, path):
     if result and result['retcode'] == 0:
         with open(path, 'wb') as f:
             f.write(result['stdout'])
+            f.write('\n')
         return True
     else:
         return False
@@ -160,6 +161,16 @@ _ceph_authtool = utils.CommandPath("ceph-authtool",
 
 _monmaptool = utils.CommandPath("monmaptool",
                                 "/usr/bin/monmaptool",)
+
+
+def sync_ceph_conf(cluster_name, minions):
+    out = local.cmd(minions,
+                    'state.single',
+                    ['file.managed', '/etc/ceph/%s.conf' % cluster_name,
+                     'source=salt://usm/conf/ceph/%s/%s.conf' % (
+                         cluster_name, cluster_name),
+                     'show_diff=False'], expr_form='list')
+    return _get_state_result(out)
 
 
 def _config_add_monitors(config, monitors):
@@ -352,13 +363,7 @@ def add_ceph_mon(cluster_name, minions):
     if out:
         return out
 
-    out = local.cmd(minions,
-                    'state.single',
-                    ['file.managed', '/etc/ceph/%s.conf' % cluster_name,
-                     'source=salt://usm/conf/ceph/%s/%s.conf' % (
-                         cluster_name, cluster_name),
-                     'show_diff=False'])
-    return _get_state_result(out)
+    return sync_ceph_conf(cluster_name, minions)
 
 
 def start_ceph_mon(cluster_name = None, monitors = []):
@@ -374,12 +379,75 @@ def start_ceph_mon(cluster_name = None, monitors = []):
     return run_state(local, tgt, 'start_ceph_mon', expr_form=expr_form)
 
 
-def add_ceph_osd(osds):
+def add_ceph_osd(cluster_name, minions):
     '''
-    :: osds = {MINION_ID: {DEVICE: FSTYPE, ...}, ...}
+    :: minions = {MINION_ID: {'public_ip': IP_ADDRESS,
+                              'cluster_ip': IP_ADDRESS,
+                              'host_name': HOSTNAME,
+                              'devices': {DEVICE: FSTYPE, ...}}, ...}
 
     '''
+    conf_file = (_CEPH_CLUSTER_CONF_DIR + '/' + cluster_name + '/' +
+                 cluster_name + '.conf')
+    config = ConfigParser.RawConfigParser()
+    config.read(conf_file)
 
-    pillar = {'usm': osds}
-    return run_state(local, osds, 'add_ceph_osd', expr_form='list',
-                     kwarg={'pillar': pillar})
+    public_network = IPNetwork(config.get('global', 'public network'))
+    if config.has_option('global', 'cluster network'):
+        cluster_network = IPNetwork(config.get('global', 'cluster network'))
+    else:
+        cluster_network = None
+    public_network, cluster_network = check_minion_networks(
+        minions, public_network, cluster_network, check_cluster_network=True)
+
+    pillar_data = {}
+    for minion, v in minions.iteritems():
+        pillar_data[minion] = {'cluster_name': cluster_name,
+                               'cluster_id': config.get('global', 'fsid'),
+                               'devices': v['devices']}
+    pillar = {'usm': pillar_data}
+
+    out = run_state(local, minions, 'prepare_ceph_osd', expr_form='list',
+                    kwarg={'pillar': pillar})
+    if out:
+        return out
+
+    out = local.cmd(minions, 'state.single',
+                    ['cmd.run', 'ceph-disk activate-all'],
+                    expr_form='list')
+
+    osd_map = {}
+    failed_minions = {}
+    for minion, v in out.iteritems():
+        osds = []
+        failed_results = {}
+        for id, res in v.iteritems():
+            if not res['result']:
+                failed_results.update({id: res})
+
+            stdout = res['changes']['stdout']
+            for line in stdout.splitlines():
+                if line.startswith('=== '):
+                    osds.append(line.split('=== ')[1].strip())
+        osd_map[minion] = osds
+        if not v:
+            failed_minions[minion] = {}
+        if failed_results:
+            failed_minions[minion] = failed_results
+
+    config.set('global', 'cluster network', cluster_network)
+    for minion, osds in osd_map.iteritems():
+        name = minions[minion].get('host_name',
+                                   utils.get_short_hostname(minion))
+        for osd in osds:
+            config.add_section(osd)
+            config.set(osd, 'host', name)
+            config.set(osd, 'public addr', minions[minion]['public_ip'])
+            config.set(osd, 'cluster addr', minions[minion]['cluster_ip'])
+
+    with open(conf_file, 'wb') as f:
+        config.write(f)
+
+    sync_ceph_conf(cluster_name, minions)
+
+    return failed_minions

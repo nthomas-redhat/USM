@@ -3,7 +3,6 @@
 {% set cluster_name = pillar['usm'][this_node]['cluster_name'] %}
 {% set mon_id = pillar['usm'][this_node]['mon_id'] %}
 {% set mon_name = pillar['usm'][this_node]['mon_name'] %}
-{% set public_ip = pillar['usm'][this_node]['public_ip'] %}
 {% set port = pillar['usm'][this_node].get('port') %}
 
 usm_node_type:
@@ -90,7 +89,7 @@ start_ceph_mon:
 {% if not pillar['usm'].get('mon_bootstrap') %}
 add-monitor:
   cmd.run:
-    - name: ceph --cluster {{ cluster_name }} mon add {{ mon_id }} {{ public_ip }}
+    - name: ceph --cluster {{ cluster_name }} mon add {{ mon_id }} {{ pillar['usm'][this_node]['public_ip'] }}
     - require:
       - cmd: start_ceph_mon
 {% endif %}
