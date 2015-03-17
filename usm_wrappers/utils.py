@@ -14,6 +14,10 @@ import socket
 import binascii
 import paramiko
 import re
+import logging
+
+
+log = logging.getLogger(__name__)
 
 
 def resolve_hostname(hostname):
@@ -511,3 +515,15 @@ def rexecCmd(cmd, host, port=22, fingerprint=None, username=None,
         return (rc, out, err)
     else:
         return (rc, out.splitlines(False), err.splitlines(False))
+
+
+def check_host_ssh_auth(host, port=22, fingerprint=None, username=None,
+                        password=None, pkey=None, key_filenames=[]):
+    try:
+        rc, out, err = rexecCmd('true', host, port, fingerprint, username,
+                                password, pkey, key_filenames)
+        if not rc:
+            return True
+    except SSHCmdExecFailed as e:
+        log.warn(e)
+    return False
