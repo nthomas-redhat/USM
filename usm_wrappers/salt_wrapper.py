@@ -138,6 +138,67 @@ def check_minion_networks(minions, public_network=None, cluster_network=None,
     return public_network, cluster_network
 
 
+def get_minion_disk_info(minions):
+    '''
+    This function returns disk/storage device info excluding their
+    parent devices
+
+    Output dictionary is
+    {DEV_MAME: {'INUSE': BOOLEAN,
+                'NAME': SHORT_NAME,
+                'KNAME': DEV_NAME,
+                'FSTYPE': FS_TYPE,
+                'MOUNTPOINT': MOUNT_POINT,
+                'UUID': FS_UUID,
+                'PARTUUID': PART_UUID,
+                'MODEL': MODEL_STRING,
+                'SIZE': SIZE_BYTES,
+                'TYPE': TYPE,
+                'PKNAME', PARENT_DEV_NAME,
+                'VENDOR': VENDOR_STRING}, ...}
+    '''
+
+    columes = 'NAME,KNAME,FSTYPE,MOUNTPOINT,UUID,PARTUUID,MODEL,SIZE,TYPE,' \
+              'PKNAME,VENDOR'
+    keys = columes.split(',')
+    lsblk = ("lsblk --all --bytes --noheadings --output='%s' --path --raw" %
+             columes)
+    out = local.cmd(minions, 'cmd.run', [lsblk], expr_form='list')
+
+    minion_dev_info = {}
+    for minion in minions:
+        lsblk_out = out.get(minion)
+
+        if not lsblk_out:
+            minion_dev_info[minion] = {}
+            continue
+
+        devlist = map(lambda line: dict(zip(keys, line.split(' '))),
+                      lsblk_out.splitlines())
+
+        parents = set([d['PKNAME'] for d in devlist])
+
+        dev_info = {}
+        for d in devlist:
+            in_use = True
+
+            if d['TYPE'] == 'disk':
+                if d['KNAME'] in parents:
+                    # skip it
+                    continue
+                else:
+                    in_use = False
+            elif not d['FSTYPE']:
+                in_use = False
+
+            d.update({'INUSE': in_use})
+            dev_info.update({d['KNAME']: d})
+
+        minion_dev_info[minion] = dev_info
+
+    return minion_dev_info
+
+
 def peer(gluster_node, new_node):
     gluster_minion = utils.resolve_ip_address(gluster_node)
     new_minion = utils.resolve_ip_address(new_node)
