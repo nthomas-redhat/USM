@@ -37,6 +37,13 @@ postgresql93-devel=9.3.6
 
 psycopg2=2.6(This needs to installed after postgress installation)
 
+python-netaddr=0.7.12
+
+python-cpopen=1.3
+
+
+
+
 
 SETUP
 ------
@@ -130,7 +137,7 @@ Start the celery service - service celery start
 
 Starting the USM Application
 ----------------------------
-python manage.py runserver <IPAddress>:<PORT>
+python manage.py runserver IPAddress:PORT
 
 Access the usm application using -
 

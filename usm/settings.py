@@ -30,7 +30,6 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = (
-    #'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -68,28 +67,17 @@ DATABASES = {
         'PASSWORD': 'usm',
         'HOST': '127.0.0.1',
         'PORT': '',
-        
     }
 }
-
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication'
     ),
-
-    # Use hyperlinked styles by default.
-    # Only used if the `serializer_class` attribute is not set on a view.
-    #'DEFAULT_MODEL_SERIALIZER_CLASS':
-    #'rest_framework.serializers.HyperlinkedModelSerializer',
-
-    # Use Django's standard `django.contrib.auth` permissions,
-    # or allow read-only access for unauthenticated users.
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated'
     ],
-    
 }
 
 # CELERY SETTINGS
@@ -97,14 +85,14 @@ BROKER_URL = 'redis://127.0.0.1:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_IMPORTS=("usm_rest_api.v1.views.views")
+CELERY_IMPORTS = ("usm_rest_api.v1.views.tasks")
 CELERY_RESULT_BACKEND = 'redis://127.0.0.1/0'
 
 import djcelery
 djcelery.setup_loader()
 
 
-#LOGGING CONFIGURATION
+# LOGGING CONFIGURATION
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -117,21 +105,21 @@ LOGGING = {
         'django_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': '/var/log/usm/usm.log',
-            'maxBytes': 1024*1024*5, #5MB
+            'maxBytes': 1024*1024*5,  # 5MB
             "backupCount": 10,
             'formatter': 'standard'
         },
         'request_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': '/var/log/usm/usm_request.log',
-            'maxBytes': 1024*1024*5, #5MB
+            'maxBytes': 1024*1024*5,  # 5MB
             "backupCount": 10,
             'formatter': 'standard'
         },
         'db_logging': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': '/var/log/usm/usm_db.log',
-            'maxBytes': 1024*1024*5, #5MB
+            'maxBytes': 1024*1024*5,  # 5MB
             "backupCount": 10,
             'formatter': 'standard'
         },
@@ -173,3 +161,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.7/howto/static-files/
 
 STATIC_URL = '/static/'
+
+if DEBUG:
+    # MEDIA_URL = '/media/'
+    STATIC_ROOT = os.path.join(os.path.dirname(BASE_DIR), "USM", "static-root")
+    # MEDIA_ROOT  = os.path.join(os.path.dirname(BASE_DIR), "static", "media")
+    STATICFILES_DIRS = (
+        os.path.join(os.path.dirname(BASE_DIR), "USM", "static"),)
