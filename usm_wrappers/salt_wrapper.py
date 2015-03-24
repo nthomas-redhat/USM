@@ -1,8 +1,13 @@
 import socket
 from jinja2 import Template
+from netaddr import IPNetwork, IPAddress
+import time
+import fnmatch
 import salt
 from salt import wheel, client
-from netaddr import IPNetwork, IPAddress
+import salt.config
+import salt.utils.event
+import salt.runner
 
 import utils
 
@@ -10,6 +15,12 @@ import utils
 opts = salt.config.master_config('/etc/salt/master')
 master = salt.wheel.WheelClient(opts)
 local = salt.client.LocalClient()
+sevent = salt.utils.event.get_event('master',
+                                    sock_dir=opts['sock_dir'],
+                                    transport=opts['transport'],
+                                    opts=opts)
+runner = salt.runner.RunnerClient(opts)
+DEFAULT_WAIT_TIME = 5
 
 
 def _get_state_result(out):
@@ -61,6 +72,45 @@ def setup_minion(host, fingerprint, username, password):
 def accept_minion(minion_id):
     out = master.call_func('key.accept', match=minion_id)
     return (True if out else False)
+
+
+def get_started_minions(minions=[], timeout=60):
+    def _get_up_minions():
+        up_minions = set(runner.cmd('manage.up', []))
+        if minion_set:
+            return up_minions.intersection(minion_set)
+        else:
+            return up_minions
+
+    minion_set = set(minions)
+    started_minions = _get_up_minions()
+
+    time_spent = 0
+    while timeout > 0:
+        if minion_set and started_minions == minion_set:
+            break
+
+        wait = timeout - time_spent
+        if wait <= 0:
+            break
+        if wait > DEFAULT_WAIT_TIME:
+            wait = DEFAULT_WAIT_TIME
+
+        start_time = time.time()
+        ret = sevent.get_event(wait=wait, full=True, tag='salt/minion')
+        end_time = time.time()
+
+        time_spent += (end_time - start_time)
+
+        if ret is None:
+            started_minions = _get_up_minions()
+        elif fnmatch.fnmatch(ret['tag'], 'salt/minion/*/start'):
+            minion = ret['data']['id']
+            if minion_set and minion not in minion_set:
+                continue
+            started_minions.add(minion)
+
+    return started_minions
 
 
 def get_machine_id(minion_id):
