@@ -88,11 +88,16 @@ def setup_transport_and_update_db(cluster_data, nodelist):
     minionIds = {}
     for node in nodelist:
         try:
-            ssh_fingerprint = usm_wrapper_utils.get_host_ssh_key(
-                node['management_ip'])
-            minionIds[node['management_ip']] = salt_wrapper.setup_minion(
-                node['management_ip'], ssh_fingerprint[0],
-                node['ssh_username'], node['ssh_password'])
+            if 'ssh_username' in node and 'ssh_password' in node:
+                ssh_fingerprint = usm_wrapper_utils.get_host_ssh_key(
+                    node['management_ip'])
+                minionIds[node['management_ip']] = salt_wrapper.setup_minion(
+                    node['management_ip'], ssh_fingerprint[0],
+                    node['ssh_username'], node['ssh_password'])
+            else:
+                # Discovered node, add hostname to the minionIds list
+                log.debug("Discovered Node: %s" % node)
+                minionIds[node['management_ip']] = node['node_name']
         except Exception, e:
             log.exception(e)
             failedNodes.append(node)
@@ -132,10 +137,15 @@ def setup_transport_and_update_db(cluster_data, nodelist):
                 if hostSerilaizer.is_valid():
                     # Delete all the fields those are not
                     # reqired to be persisted
-                    del hostSerilaizer.validated_data['ssh_password']
-                    del hostSerilaizer.validated_data['ssh_key_fingerprint']
-                    del hostSerilaizer.validated_data['ssh_username']
-                    del hostSerilaizer.validated_data['ssh_port']
+                    if 'ssh_password' in hostSerilaizer.validated_data:
+                        del hostSerilaizer.validated_data['ssh_password']
+                    if 'ssh_key_fingerprint' in hostSerilaizer.validated_data:
+                        del hostSerilaizer.validated_data[
+                            'ssh_key_fingerprint']
+                    if 'ssh_username' in hostSerilaizer.validated_data:
+                        del hostSerilaizer.validated_data['ssh_username']
+                    if 'ssh_port' in hostSerilaizer.validated_data:
+                        del hostSerilaizer.validated_data['ssh_port']
 
                     hostSerilaizer.save()
                 else:

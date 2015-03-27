@@ -15,5 +15,5 @@ def check_minion_is_new(minion_id):
 def add_minion_to_free_pool(minion_id):
     node = DiscoveredNode(
         node_name=minion_id,
-        management_ip=usm_wrapper_utils.resolve_hostname(minion_id))
+        management_ip=usm_wrapper_utils.resolve_hostname(minion_id)[0])
     node.save()
