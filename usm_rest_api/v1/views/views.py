@@ -85,7 +85,7 @@ then 401 is returend.
                 status=status.HTTP_401_UNAUTHORIZED)
         if request.session.test_cookie_worked():
             request.session.delete_test_cookie()
-        return Response({'message': 'Logged out'})
+        return Response({'message': 'Logged in'})
     else:
         pass
     request.session.set_test_cookie()
@@ -155,6 +155,46 @@ ip address:
             {'message': 'Error while resolving IP Address'}, status=417)
 
     return Response({'Hostname': hostname}, status=200)
+
+
+@api_view(['GET', 'POST'])
+@permission_classes((IsAuthenticated,))
+def validate_host(request):
+    """
+The resource is used to validate the host details before adding
+to the cluster by POSTing a message as follows:
+
+::
+
+    {
+        "host": "<ip address>",
+        "port": "<ssh port>"
+        "fingerprint": <ssh fingerprint>
+        "username": <ssh username>
+        "password": <ssh password>
+    }:
+
+    """
+    log.debug(
+        "Inside validate_host. Request Data: %s" % request.data)
+    if request.method == 'POST':
+        try:
+            status = usm_wrapper_utils.check_host_ssh_auth(
+                request.data['host'],
+                request.data['port'],
+                request.data['fingerprint'],
+                request.data['username'],
+                request.data['password'])
+            if status:
+                return Response({'message': 'Success'}, status=200)
+            else:
+                return Response({'message': 'Failed'}, status=417)
+        except Exception, e:
+            log.exception(e)
+            return Response(
+                {'message': 'Failed'}, status=417)
+    else:
+        return Response({})
 
 
 class ClusterViewSet(viewsets.ModelViewSet):

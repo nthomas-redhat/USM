@@ -39,4 +39,5 @@ urlpatterns = patterns('',
                        url(r'^tasks/?$',
                            celery_views.registered_tasks,
                            name='celery-tasks'),
+                       url(r'^utils/validate-host', v1_views.validate_host),
                        url(r'^', include(router.urls)),)

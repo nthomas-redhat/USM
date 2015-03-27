@@ -150,7 +150,8 @@ def setup_transport_and_update_db(cluster_data, nodelist):
             failedNodes.append(node)
         # Remove the node from discovered nodes if present
         try:
-            discovered = DiscoveredNode.objects.get(node_name__exact=node['node_name'])
+            discovered = DiscoveredNode.objects.get(
+                node_name__exact=node['node_name'])
             if discovered:
                 # delete from discovered nodes table
                 log.debug("Clearing the entry from DiscoveredNodes")
