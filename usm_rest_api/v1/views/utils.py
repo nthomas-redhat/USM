@@ -1,7 +1,6 @@
 import random
 import logging
 import uuid
-import time
 
 from usm_rest_api.models import Cluster
 from usm_rest_api.v1.serializers.serializers import ClusterSerializer
@@ -98,11 +97,6 @@ def setup_transport_and_update_db(cluster_data, nodelist):
             log.exception(e)
             failedNodes.append(node)
     log.debug(minionIds)
-    # Sleep for sometime to make sure all the restarted minions are back
-    # online
-    # TODO - Sleep will be removed from here. Need to look at the events from
-    # salt to make sure that the channel is ready for sending the commands
-    time.sleep(ACCEPT_MINION_TIMEOUT)
     log.debug("Accepting the minions keys")
 
     # Accept the keys of the successful minions and add to the DB
@@ -115,11 +109,14 @@ def setup_transport_and_update_db(cluster_data, nodelist):
             failedNodes.append(node)
     log.debug(minionIds)
     #
-    # Wait for some time so that the communication chanel is ready
-    # TODO - Sleep will be removed from here. Need to look at the events from
-    # salt to make sure that the channel is ready for sending the commands
-    time.sleep(CONFIG_PUSH_TIMEOUT)
-
+    # Wait till the communication chanel is ready
+    #
+    started_minions = salt_wrapper.get_started_minions(minionIds.values())
+    log.debug("Started Minions %s" % started_minions)
+    # if any of the minions are not ready, move ito the failed Nodes
+    failedNodes.extend(
+        [item for item in nodelist if item['node_name'] not in
+         started_minions])
     # Persist the hosts into DB
     for node in nodelist:
         #
