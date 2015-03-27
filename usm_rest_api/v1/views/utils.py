@@ -7,6 +7,8 @@ from usm_rest_api.models import Cluster
 from usm_rest_api.v1.serializers.serializers import ClusterSerializer
 from usm_rest_api.models import Host
 from usm_rest_api.v1.serializers.serializers import HostSerializer
+from usm_rest_api.models import StorageDevice
+from usm_rest_api.models import DiscoveredNode
 
 from usm_wrappers import salt_wrapper
 from usm_wrappers import utils as usm_wrapper_utils
@@ -146,6 +148,15 @@ def setup_transport_and_update_db(cluster_data, nodelist):
         except Exception, e:
             log.exception(e)
             failedNodes.append(node)
+        # Remove the node from discovered nodes if present
+        try:
+            discovered = DiscoveredNode.objects.get(node_name__exact=node['node_name'])
+            if discovered:
+                # delete from discovered nodes table
+                log.debug("Clearing the entry from DiscoveredNodes")
+                discovered.delete()
+        except Exception, e:
+            log.exception(e)
 
     # Push the cluster configuration to nodes
     log.debug("Push Cluster config to Nodes")
@@ -159,6 +170,7 @@ def setup_transport_and_update_db(cluster_data, nodelist):
                     node['management_ip']) in failed_minions:
                 failedNodes.append(node)
     log.debug("failedNodes %s" % failedNodes)
+
     return minionIds, failedNodes
 
 
@@ -180,6 +192,8 @@ def create_ceph_cluster(nodelist, cluster_data, minionIds):
     if nodelist:
         minions = {}
         for node in nodelist:
+            if node['node_type'] == HOST_TYPE_OSD:
+                continue
             nodeInfo = {'public_ip': node['public_ip'],
                         'cluster_ip': node['cluster_ip']}
             minions[minionIds[node['management_ip']]] = nodeInfo
@@ -200,25 +214,18 @@ def create_ceph_cluster(nodelist, cluster_data, minionIds):
     return status
 
 
-def add_ceph_osds(nodelist, cluster_data, minionIds):
+def add_ceph_osd(node, cluster_name, minionId):
     failedNodes = []
-    if nodelist:
-        for node in nodelist:
-            nodeInfo = {'public_ip': node['public_ip'],
-                        'cluster_ip': node['cluster_ip'],
-                        'devices': {'/dev/vdb': 'xfs'}}  # harcoded for now
-            log.debug("cluster_name %s" % cluster_data['cluster_name'])
-            try:
-                failed = salt_wrapper.add_ceph_osd(
-                    cluster_data['cluster_name'],
-                    {minionIds[node['management_ip']]: nodeInfo})
-                if failed:
-                    log.debug("Failed:" % failed)
-                    failedNodes += _map_failed_nodes(
-                        failed, nodelist, minionIds)
-            except Exception, e:
-                log.exception(e)
-                failedNodes.append(node)
+    try:
+        failed = salt_wrapper.add_ceph_osd(
+            cluster_name, {minionId: node})
+        if failed:
+            log.debug("Failed:%s" % failed)
+            if minionId in failed.keys():
+                failedNodes.append(minionId)
+    except Exception, e:
+        log.exception(e)
+        failedNodes.append(node)
 
     return failedNodes
 
@@ -262,3 +269,62 @@ def _map_failed_nodes(failed, nodelist, minionIds):
             if minionIds[node['management_ip']] in failedlist:
                 failedNodes.append(node)
     return failedNodes
+
+
+def discover_disks(nodelist, minionIds):
+    minions = []
+    if nodelist:
+        for node in nodelist:
+            minions.append(minionIds[node['management_ip']])
+        log.debug("Monions %s" % minions)
+        try:
+            disksInfo = salt_wrapper.get_minion_disk_info(minions)
+            for node in nodelist:
+                diskInfo = disksInfo[minionIds[node['management_ip']]]
+                for k in diskInfo:
+                    log.debug("Disks: %s" % diskInfo[k])
+                    log.debug("node UUID: %s" % node['node_id'])
+                    sd = StorageDevice(
+                        storage_device_name=diskInfo[k]['PKNAME'],
+                        device_uuid=diskInfo[k]['UUID'],
+                        node_id=node['node_id'],
+                        device_type=diskInfo[k]['TYPE'],
+                        device_path=diskInfo[k]['KNAME'],
+                        filesystem_type=diskInfo[k]['FSTYPE'],
+                        device_mount_point=diskInfo[k]['MOUNTPOINT'])
+                    log.debug("Saving")
+                    sd.save()
+        except Exception, e:
+            log.exception(e)
+            return False
+    return True
+
+
+class ClusterCreationFailed(Exception):
+    message = "Cluster creation failed"
+
+    def __init__(self, nodelist, reason):
+        self.failedNodes = nodelist
+        self.reason = reason
+
+    def __str__(self):
+        nodeNames = []
+        for node in self.failedNodes:
+            nodeNames.append(node['node_name'])
+        s = ("%s\nfailednodes: %s\nreason: %s\n")
+        return s % (self.message, nodeNames, self.reason)
+
+
+class HostAdditionFailed(Exception):
+    message = "Host Addition failed"
+
+    def __init__(self, nodelist, reason):
+        self.failedNodes = nodelist
+        self.reason = reason
+
+    def __str__(self):
+        nodeNames = []
+        for node in self.failedNodes:
+            nodeNames.append(node['node_name'])
+        s = ("%s\nfailednodes: %s\nreason: %s\n")
+        return s % (self.message, nodeNames, self.reason)

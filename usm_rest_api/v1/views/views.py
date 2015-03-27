@@ -13,14 +13,24 @@ from rest_framework.decorators import permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework import viewsets
+from rest_framework import viewsets, mixins
+from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import detail_route
 
 from usm_rest_api.v1.serializers.serializers import UserSerializer
 from usm_rest_api.models import Cluster
 from usm_rest_api.v1.serializers.serializers import ClusterSerializer
 from usm_rest_api.models import Host
 from usm_rest_api.v1.serializers.serializers import HostSerializer
+from usm_rest_api.v1.serializers.serializers import StorageDeviceSerializer
+from usm_rest_api.models import StorageDevice
+from usm_rest_api.v1.serializers.serializers import DiscoveredNodeSerializer
+from usm_rest_api.models import DiscoveredNode
+from usm_rest_api.v1.serializers.serializers import HostInterfaceSerializer
+from usm_rest_api.models import HostInterface
+from usm_rest_api.v1.serializers.serializers import CephOSDSerializer
+from usm_rest_api.models import CephOSD
 
 from usm_wrappers import utils as usm_wrapper_utils
 
@@ -197,6 +207,15 @@ class ClusterViewSet(viewsets.ModelViewSet):
         log.debug("Exiting create_cluster JobID: %s" % jobId)
         return Response(str(jobId), status=201)
 
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def hosts(self, request, pk=None):
+        log.debug("Inside get hosts")
+        hosts = Host.objects.filter(cluster_id=pk)
+        serializer = HostSerializer(hosts, many=True,
+                                    context={'request': request})
+        return Response(serializer.data)
+
 
 class UserViewSet(viewsets.ModelViewSet):
     """
@@ -235,5 +254,78 @@ class HostViewSet(viewsets.ModelViewSet):
             # Create a node and add to the Ceph Cluster
             jobId = tasks.createCephHost.delay(data)
 
+        log.debug("Exiting ... JobID: %s" % jobId)
+        return Response(str(jobId), status=201)
+
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def storageDevices(self, request, pk=None):
+        storageDevices = StorageDevice.objects.filter(node_id=pk)
+        serializer = StorageDeviceSerializer(
+            storageDevices, many=True,
+            context={'request': request})
+        return Response(serializer.data)
+
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def hostInterfaces(self, request, pk=None):
+        hostInterfaces = HostInterface.objects.filter(node_id=pk)
+        serializer = HostInterfaceSerializer(
+            hostInterfaces, many=True,
+            context={'request': request})
+        return Response(serializer.data)
+
+    @detail_route(methods=['get', 'delete'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def osds(self, request, pk=None):
+        osds = CephOSD.objects.filter(node_id=pk)
+        serializer = CephOSDSerializer(
+            osds, many=True,
+            context={'request': request})
+        return Response(serializer.data)
+
+
+class StorageDeviceViewSet(mixins.RetrieveModelMixin,
+                           mixins.ListModelMixin,
+                           viewsets.GenericViewSet):
+    """
+    Storage_Device information.
+    """
+    queryset = StorageDevice.objects.all()
+    serializer_class = StorageDeviceSerializer
+
+
+class DiscoveredNodeViewSet(mixins.RetrieveModelMixin,
+                            mixins.ListModelMixin,
+                            viewsets.GenericViewSet):
+    """
+    Discovered_Nodes information.
+    """
+    queryset = DiscoveredNode.objects.all()
+    serializer_class = DiscoveredNodeSerializer
+
+
+class HostInterfaceViewSet(mixins.RetrieveModelMixin,
+                           mixins.ListModelMixin,
+                           viewsets.GenericViewSet):
+    """
+    Host interfaces information.
+    """
+    queryset = HostInterface.objects.all()
+    serializer_class = HostInterfaceSerializer
+
+
+class CephOSDViewSet(viewsets.ModelViewSet):
+    """
+    Host interfaces information.
+    """
+    queryset = CephOSD.objects.all()
+    serializer_class = CephOSDSerializer
+
+    def create(self, request):
+        log.debug(
+            "Inside CephOSDViewSet Create. Request Data: %s" % request.data)
+        data = copy.deepcopy(request.data.copy())
+        jobId = tasks.createCephOSD.delay(data)
         log.debug("Exiting ... JobID: %s" % jobId)
         return Response(str(jobId), status=201)

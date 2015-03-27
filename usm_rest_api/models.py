@@ -90,3 +90,50 @@ class Host(models.Model):
 
     def __str__(self):
         return self.node_name
+
+
+class StorageDevice(models.Model):
+    storage_device_id = UUIDField(auto=True, primary_key=True, max_length=100)
+    storage_device_name = models.CharField(max_length=1000)
+    device_uuid = UUIDField(blank=True, null=True, max_length=100)
+    filesystem_uuid = UUIDField(blank=True, null=True, max_length=100)
+    node = models.ForeignKey(Host)
+    description = models.CharField(
+        max_length=4000, blank=True, null=True, default='')
+    device_type = models.CharField(
+        max_length=50, blank=True, null=True, default='')
+    device_path = models.CharField(
+        max_length=4096, blank=True, null=True, default='')
+    filesystem_type = models.CharField(
+        max_length=50, blank=True, null=True, default='')
+    device_mount_point = models.CharField(
+        max_length=4096, blank=True, null=True, default='')
+
+    def __str__(self):
+        return self.storage_device_name
+
+
+class DiscoveredNode(models.Model):
+    node_id = UUIDField(auto=True, primary_key=True)
+    node_name = models.CharField(max_length=40)
+    management_ip = models.CharField(max_length=255)
+
+
+class HostInterface(models.Model):
+    interface_id = UUIDField(auto=True, primary_key=True)
+    interface_name = models.CharField(max_length=40, blank=True, default='')
+    network_name = models.CharField(max_length=40, blank=True, null=True)
+    node = models.ForeignKey(Host)
+    mac_address = models.CharField(max_length=60, blank=True, null=True)
+    ip_address = models.CharField(max_length=20, blank=True, null=True)
+    subnet_address = models.CharField(max_length=20, blank=True, null=True)
+    gateway_address = models.CharField(max_length=20, blank=True, null=True)
+
+    def __str__(self):
+        return self.interface_name
+
+
+class CephOSD(models.Model):
+    osd_id = UUIDField(auto=True, primary_key=True)
+    node = models.ForeignKey(Host)
+    storage_device = models.ForeignKey(StorageDevice)
