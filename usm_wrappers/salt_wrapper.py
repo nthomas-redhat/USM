@@ -253,7 +253,52 @@ def peer(gluster_node, new_node):
     gluster_minion = utils.resolve_ip_address(gluster_node)
     new_minion = utils.resolve_ip_address(new_node)
     out = local.cmd(gluster_minion, 'glusterfs.peer', [new_minion])
-    if out and 'success' in out[gluster_minion]:
+    if out and out[gluster_minion] == True:
+        return True
+    else:
+        return False
+
+
+def create_gluster_volume(minion, name, bricks, stripe=0, replica=0,
+                          transport=[], force=False):
+    out = local.cmd(minion, 'glusterfs.create', [name, bricks, stripe, replica,
+                                                 False, transport, force])
+    volume_id = out.get(minion, {}).get('uuid')
+    if volume_id:
+        return volume_id
+    else:
+        False
+
+
+def list_gluster_volumes(minion):
+    out = local.cmd(minion, 'glusterfs.list_volumes')
+    return out.get(minion)
+
+
+def get_gluster_volume_status(minion, name):
+    out = local.cmd(minion, 'glusterfs.status', [name])
+    return out.get(minion)
+
+
+def start_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.start_volume', [name])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def stop_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.stop_volume', [name])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def delete_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.delete', [name])
+    if out and out[minion] == True:
         return True
     else:
         return False
