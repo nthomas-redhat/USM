@@ -3,6 +3,8 @@ from jinja2 import Template
 from netaddr import IPNetwork, IPAddress
 import time
 import fnmatch
+import os
+
 import salt
 from salt import wheel, client
 import salt.config
@@ -259,6 +261,25 @@ def peer(gluster_node, new_node):
         return False
 
 
+def create_gluster_brick(minion, device, fs_type='xfs', brick_name=None,
+                         mount_point=None):
+    if not device.startswith('/'):
+        device = '/dev/' + device
+
+    if not brick_name:
+        brick_name = os.path.basename(device) + '1'
+
+    pillar_data = {}
+    pillar_data[minion] = {'device': device,
+                           'fs_type': fs_type,
+                           'brick_name': brick_name}
+    pillar = {'usm': pillar_data}
+
+    out = run_state(local, [minion], 'create_gluster_brick', expr_form='list',
+                    kwarg={'pillar': pillar})
+    return out
+
+
 def create_gluster_volume(minion, name, bricks, stripe=0, replica=0,
                           transport=[], force=False):
     out = local.cmd(minion, 'glusterfs.create', [name, bricks, stripe, replica,
@@ -305,7 +326,6 @@ def delete_gluster_volume(minion, name):
 
 
 import ConfigParser
-import os
 import string
 
 _CEPH_CLUSTER_CONF_DIR = '/srv/salt/usm/conf/ceph'
