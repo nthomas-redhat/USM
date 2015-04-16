@@ -4,6 +4,10 @@ from rest_framework import serializers
 
 from usm_rest_api.models import Cluster
 from usm_rest_api.models import Host
+from usm_rest_api.models import StorageDevice
+from usm_rest_api.models import DiscoveredNode
+from usm_rest_api.models import HostInterface
+from usm_rest_api.models import CephOSD
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -44,27 +48,54 @@ class UserSerializer(serializers.ModelSerializer):
         return instance
 
 
-class ClusterSerializer(serializers.ModelSerializer):
+class StorageDeviceSerializer(serializers.ModelSerializer):
     """
-    Serializer for the Cluster model.
+    Serializer for the Storage_Device model.
 
-    Used to expose a usm-rest-api cluster management resource.
+    Used to expose a usm-rest-api Storage_Device management resource.
     """
     class Meta:
-        model = Cluster
-        fields = ('cluster_id', 'cluster_name', 'description',
-                  'compatibility_version', 'cluster_type',
-                  'storage_type', 'cluster_status')
+        model = StorageDevice
+        fields = ('storage_device_id', 'storage_device_name', 'device_uuid',
+                  'filesystem_uuid', 'node', 'description', 'device_type',
+                  'device_path', 'filesystem_type', 'device_mount_point')
+
+
+class HostInterfaceSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Host_Interface model.
+
+    Used to expose a usm-rest-api Host_Interface management resource.
+    """
+    class Meta:
+        model = HostInterface
+        fields = ('interface_id', 'interface_name', 'network_name',
+                  'node', 'mac_address', 'ip_address',
+                  'subnet_address', 'gateway_address')
+
+
+class CephOSDSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Discovered_Nodes model.
+
+    Used to expose a usm-rest-api Discovered_Nodes management resource.
+    """
+    class Meta:
+        model = CephOSD
+        fields = ('osd_id', 'node', 'storage_device')
 
 
 class HostSerializer(serializers.ModelSerializer):
     """
-    Serializer for the Cluster model.
+    Serializer for the Host model.
 
-    Used to expose a usm-rest-api cluster management resource.
+    Used to expose a usm-rest-api Host management resource.
     """
     cluster = serializers.PrimaryKeyRelatedField(
         queryset=Cluster.objects.all())
+    storageDevices = StorageDeviceSerializer(many=True, read_only=True)
+    hostInterfaces = HostInterfaceSerializer(many=True, read_only=True)
+    osds = CephOSDSerializer(many=True, read_only=True)
 
     ssh_username = serializers.CharField(
         write_only=True, max_length=255, required=False, allow_null=True)
@@ -81,4 +112,31 @@ class HostSerializer(serializers.ModelSerializer):
         fields = ('node_id', 'node_name', 'description', 'management_ip',
                   'cluster_ip', 'public_ip', 'cluster', 'ssh_username',
                   'ssh_port', 'ssh_key_fingerprint', 'ssh_password',
-                  'node_type', 'node_status')
+                  'node_type', 'node_status', 'storageDevices',
+                  'hostInterfaces', 'osds')
+
+
+class ClusterSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Cluster model.
+
+    Used to expose a usm-rest-api cluster management resource.
+    """
+    hosts = HostSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Cluster
+        fields = ('cluster_id', 'cluster_name', 'description',
+                  'compatibility_version', 'cluster_type',
+                  'storage_type', 'cluster_status', 'hosts')
+
+
+class DiscoveredNodeSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Discovered_Nodes model.
+
+    Used to expose a usm-rest-api Discovered_Nodes management resource.
+    """
+    class Meta:
+        model = DiscoveredNode
+        fields = ('node_id', 'node_name', 'management_ip')
