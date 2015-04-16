@@ -3,6 +3,20 @@ from django.utils.translation import ugettext_lazy as _
 
 from django_extensions.db.fields import UUIDField
 
+STATUS_UP = 0
+STATUS_WARNING = 1
+STATUS_DOWN = 2
+STATUS_UNKNOWN = 3
+STATUS_CREATED = 4
+
+GEN_STATUS_CHOICES = (
+    (STATUS_UP, _('UP')),
+    (STATUS_WARNING, _('WARNING')),
+    (STATUS_DOWN, _('DOWN')),
+    (STATUS_UNKNOWN, _('UNKNOWN')),
+    (STATUS_CREATED, _('CREATED')),
+)
+
 
 class Cluster(models.Model):
     """ Model representing a storage cluster"""
@@ -108,6 +122,8 @@ class StorageDevice(models.Model):
         max_length=50, blank=True, null=True, default='')
     device_mount_point = models.CharField(
         max_length=4096, blank=True, null=True, default='')
+    size = models.FloatField(blank=True, null=True)
+    inuse = models.BooleanField(default=False)
 
     def __str__(self):
         return self.storage_device_name
@@ -137,3 +153,37 @@ class CephOSD(models.Model):
     osd_id = UUIDField(auto=True, primary_key=True)
     node = models.ForeignKey(Host)
     storage_device = models.ForeignKey(StorageDevice)
+    osd_status = models.SmallIntegerField(choices=GEN_STATUS_CHOICES)
+
+
+class GlusterVolume(models.Model):
+    VOLUME_TYPE_DISTRIBUTE = 1
+    VOLUME_TYPE_DISTRIBUTE_REPLICATE = 2
+    VOLUME_TYPE_REPLICATE = 3
+    VOLUME_TYPE_STRIPE = 4
+    VOLUME_TYPE_STRIPE_REPLICATE = 5
+    VOLUME_TYPE_CHOICES = (
+        (VOLUME_TYPE_DISTRIBUTE, _('Distributed volume')),
+        (VOLUME_TYPE_DISTRIBUTE_REPLICATE, _('Distributed Replicate volume')),
+        (VOLUME_TYPE_REPLICATE, _('Replicated Volume')),
+        (VOLUME_TYPE_STRIPE, _('Striped Volume')),
+        (VOLUME_TYPE_STRIPE_REPLICATE, _('Striped Replicate Volume')),
+    )
+    volume_id = UUIDField(auto=False, primary_key=True)
+    cluster = models.ForeignKey(Cluster)
+    volume_name = models.CharField(max_length=40)
+    volume_type = models.SmallIntegerField(choices=VOLUME_TYPE_CHOICES)
+    replica_count = models.SmallIntegerField(default=0)
+    stripe_count = models.SmallIntegerField(default=0)
+    volume_status = models.SmallIntegerField(
+        choices=GEN_STATUS_CHOICES, default=4)
+
+
+class GlusterBrick(models.Model):
+    brick_id = UUIDField(auto=True, primary_key=True)
+    volume = models.ForeignKey(GlusterVolume)
+    node = models.ForeignKey(Host)
+    brick_path = models.CharField(max_length=4096)
+    storage_device = models.ForeignKey(StorageDevice)
+    brick_status = models.SmallIntegerField(
+        choices=GEN_STATUS_CHOICES, default=3)

@@ -8,6 +8,8 @@ from usm_rest_api.models import StorageDevice
 from usm_rest_api.models import DiscoveredNode
 from usm_rest_api.models import HostInterface
 from usm_rest_api.models import CephOSD
+from usm_rest_api.models import GlusterVolume
+from usm_rest_api.models import GlusterBrick
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -58,7 +60,8 @@ class StorageDeviceSerializer(serializers.ModelSerializer):
         model = StorageDevice
         fields = ('storage_device_id', 'storage_device_name', 'device_uuid',
                   'filesystem_uuid', 'node', 'description', 'device_type',
-                  'device_path', 'filesystem_type', 'device_mount_point')
+                  'device_path', 'filesystem_type', 'device_mount_point',
+                  'size','inuse')
 
 
 class HostInterfaceSerializer(serializers.ModelSerializer):
@@ -82,7 +85,34 @@ class CephOSDSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = CephOSD
-        fields = ('osd_id', 'node', 'storage_device')
+        fields = ('osd_id', 'node', 'storage_device', 'osd_status')
+
+
+class GlusterBrickSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the GlusterBrick model.
+
+    Used to expose a usm-rest-api GlusterBrick management resource.
+    """
+    class Meta:
+        model = GlusterBrick
+        fields = ('brick_id', 'volume', 'node', 'brick_path',
+                  'storage_device', 'brick_status')
+
+
+class GlusterVolumeSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the GlusterVolume model.
+
+    Used to expose a usm-rest-api GlusterVolume management resource.
+    """
+    bricks = GlusterBrickSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = GlusterVolume
+        fields = ('volume_id', 'cluster', 'volume_name',
+                  'volume_type', 'replica_count',
+                  'stripe_count', 'volume_status', 'bricks')
 
 
 class HostSerializer(serializers.ModelSerializer):
@@ -96,6 +126,7 @@ class HostSerializer(serializers.ModelSerializer):
     storageDevices = StorageDeviceSerializer(many=True, read_only=True)
     hostInterfaces = HostInterfaceSerializer(many=True, read_only=True)
     osds = CephOSDSerializer(many=True, read_only=True)
+    bricks = GlusterBrickSerializer(many=True, read_only=True)
 
     ssh_username = serializers.CharField(
         write_only=True, max_length=255, required=False, allow_null=True)
@@ -113,22 +144,7 @@ class HostSerializer(serializers.ModelSerializer):
                   'cluster_ip', 'public_ip', 'cluster', 'ssh_username',
                   'ssh_port', 'ssh_key_fingerprint', 'ssh_password',
                   'node_type', 'node_status', 'storageDevices',
-                  'hostInterfaces', 'osds')
-
-
-class ClusterSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the Cluster model.
-
-    Used to expose a usm-rest-api cluster management resource.
-    """
-    hosts = HostSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = Cluster
-        fields = ('cluster_id', 'cluster_name', 'description',
-                  'compatibility_version', 'cluster_type',
-                  'storage_type', 'cluster_status', 'hosts')
+                  'hostInterfaces', 'osds', 'bricks')
 
 
 class DiscoveredNodeSerializer(serializers.ModelSerializer):
@@ -140,3 +156,19 @@ class DiscoveredNodeSerializer(serializers.ModelSerializer):
     class Meta:
         model = DiscoveredNode
         fields = ('node_id', 'node_name', 'management_ip')
+
+
+class ClusterSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Cluster model.
+
+    Used to expose a usm-rest-api cluster management resource.
+    """
+    hosts = HostSerializer(many=True, read_only=True)
+    volumes = GlusterVolumeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Cluster
+        fields = ('cluster_id', 'cluster_name', 'description',
+                  'compatibility_version', 'cluster_type',
+                  'storage_type', 'cluster_status', 'hosts', 'volumes')

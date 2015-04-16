@@ -12,6 +12,8 @@ router.register(r'storage-devices', v1_views.StorageDeviceViewSet)
 router.register(r'discovered-hosts', v1_views.DiscoveredNodeViewSet)
 router.register(r'host-interfaces', v1_views.HostInterfaceViewSet)
 router.register(r'ceph/osds', v1_views.CephOSDViewSet)
+router.register(r'gluster/volumes', v1_views.GlusterVolumeViewSet)
+router.register(r'gluster/bricks', v1_views.GlusterBrickViewSet)
 
 
 urlpatterns = patterns('',
