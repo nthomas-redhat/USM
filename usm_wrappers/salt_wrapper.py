@@ -627,3 +627,18 @@ def add_ceph_osd(cluster_name, minions):
     sync_ceph_conf(cluster_name, minions)
 
     return failed_minions
+
+
+def create_ceph_pool(monitor, cluster_name, pool_name, pg_num=0):
+    cmd = "ceph --cluster %s osd pool create %s" % (cluster_name, pool_name)
+    if pg_num:
+        cmd += " %s" % pg_num
+    else:
+        cmd += " 333"
+
+    out = local.cmd(monitor, 'cmd.run_all', [cmd])
+
+    if out.get(monitor, {}).get('retcode') == 0:
+        return True
+    else:
+        return False
