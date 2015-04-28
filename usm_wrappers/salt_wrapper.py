@@ -325,6 +325,15 @@ def delete_gluster_volume(minion, name):
         return False
 
 
+def add_gluster_bricks(minion, name, bricks, stripe=0, replica=0, force=False):
+    out = local.cmd(minion, 'glusterfs.add_volume_bricks',
+                    [name, bricks, replica, stripe, force])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
 import ConfigParser
 import string
 
