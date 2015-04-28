@@ -334,6 +334,11 @@ def add_gluster_bricks(minion, name, bricks, stripe=0, replica=0, force=False):
         return False
 
 
+def get_gluster_volume_usage(minion, name):
+    out = local.cmd(minion, 'glusterfs.get_volume_usage', [name])
+    return out.get(minion, {})
+
+
 import ConfigParser
 import string
 
