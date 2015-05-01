@@ -377,8 +377,8 @@ def _gen_ceph_cluster_conf(conf_file, cluster_name, fsid, monitors,
                            osd_journal_size = 1024,
                            osd_pool_default_size = 2,
                            osd_pool_default_min_size = 1,
-                           osd_pool_default_pg_num = 333,
-                           osd_pool_default_pgp_num = 333,
+                           osd_pool_default_pg_num = 128,
+                           osd_pool_default_pgp_num = 128,
                            osd_crush_chooseleaf_type = 1):
     '''
     :: monitors = {ID: {'name': SHORT_HOSTNAME, 'address': IP_ADDR,
@@ -648,7 +648,7 @@ def create_ceph_pool(monitor, cluster_name, pool_name, pg_num=0):
     if pg_num:
         cmd += " %s" % pg_num
     else:
-        cmd += " 333"
+        cmd += " 128"
 
     out = local.cmd(monitor, 'cmd.run_all', [cmd])
 
