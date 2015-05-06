@@ -603,28 +603,23 @@ def add_ceph_osd(cluster_name, minions):
     if out:
         return out
 
-    out = local.cmd(minions, 'state.single',
-                    ['cmd.run', 'ceph-disk activate-all'],
+    out = local.cmd(minions, 'cmd.run_all', ['ceph-disk activate-all'],
                     expr_form='list')
 
     osd_map = {}
     failed_minions = {}
     for minion, v in out.iteritems():
         osds = []
-        failed_results = {}
-        for id, res in v.iteritems():
-            if not res['result']:
-                failed_results.update({id: res})
 
-            stdout = res['changes']['stdout']
-            for line in stdout.splitlines():
-                if line.startswith('=== '):
-                    osds.append(line.split('=== ')[1].strip())
+        if v.get('retcode') != 0:
+            failed_minions[minion] = v
+            continue
+
+        for line in v['stdout'].splitlines():
+            if line.startswith('=== '):
+                osds.append(line.split('=== ')[1].strip())
+                break
         osd_map[minion] = osds
-        if not v:
-            failed_minions[minion] = {}
-        if failed_results:
-            failed_minions[minion] = failed_results
 
     config.set('global', 'cluster network', cluster_network)
     for minion, osds in osd_map.iteritems():
