@@ -4,6 +4,7 @@ from netaddr import IPNetwork, IPAddress
 import time
 import fnmatch
 import os
+import json
 
 import salt
 from salt import wheel, client
@@ -654,5 +655,17 @@ def create_ceph_pool(monitor, cluster_name, pool_name, pg_num=0):
 
     if out.get(monitor, {}).get('retcode') == 0:
         return True
+    else:
+        return False
+
+
+def list_ceph_pools(monitor, cluster_name):
+    cmd = "ceph --cluster %s -f json osd lspools" % cluster_name
+
+    out = local.cmd(monitor, 'cmd.run_all', [cmd])
+
+    if out.get(monitor, {}).get('retcode') == 0:
+        stdout = out.get(monitor, {}).get('stdout')
+        return [pool['poolname'] for pool in json.loads(stdout)]
     else:
         return False
