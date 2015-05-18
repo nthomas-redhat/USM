@@ -8,6 +8,7 @@ from usm_rest_api.models import Host
 from usm_rest_api.v1.serializers.serializers import HostSerializer
 from usm_rest_api.models import StorageDevice
 from usm_rest_api.models import DiscoveredNode
+from usm_rest_api.models import GlusterVolume
 
 from usm_wrappers import salt_wrapper
 from usm_wrappers import utils as usm_wrapper_utils
@@ -32,6 +33,22 @@ HOST_STATUS_INACTIVE = 1
 HOST_STATUS_ACTIVE = 2
 ACCEPT_MINION_TIMEOUT = 3
 CONFIG_PUSH_TIMEOUT = 15
+STATUS_UP = 0
+STATUS_WARNING = 1
+STATUS_DOWN = 2
+STATUS_UNKNOWN = 3
+STATUS_CREATED = 4
+VOLUME_TYPE_DISTRIBUTE = 1
+VOLUME_TYPE_DISTRIBUTE_REPLICATE = 2
+VOLUME_TYPE_REPLICATE = 3
+VOLUME_TYPE_STRIPE = 4
+VOLUME_TYPE_STRIPE_REPLICATE = 5
+
+# operations
+OP_VOLUME_START = 1
+OP_VOLUME_STOP = 2
+OP_VOLUME_STATUS = 3
+OP_VOLUME_DELETE = 4
 
 
 def add_gluster_host(hostlist, newNode):
@@ -129,8 +146,10 @@ def setup_transport_and_update_db(cluster_data, nodelist):
         #
         try:
             if node not in failedNodes:
+                log.debug("minion: %s" % minionIds[node['management_ip']])
                 node['node_id'] = salt_wrapper.get_machine_id(
                     minionIds[node['management_ip']])
+                log.debug("Node Id: %s" % node['node_id'])
                 node['cluster'] = str(cluster_data['cluster_id'])
                 hostSerilaizer = HostSerializer(data=node)
 
@@ -163,6 +182,8 @@ def setup_transport_and_update_db(cluster_data, nodelist):
                 # delete from discovered nodes table
                 log.debug("Clearing the entry from DiscoveredNodes")
                 discovered.delete()
+        except DiscoveredNode.DoesNotExist:
+            pass
         except Exception, e:
             log.exception(e)
 
@@ -293,19 +314,246 @@ def discover_disks(nodelist, minionIds):
                     log.debug("Disks: %s" % diskInfo[k])
                     log.debug("node UUID: %s" % node['node_id'])
                     sd = StorageDevice(
-                        storage_device_name=diskInfo[k]['PKNAME'],
+                        storage_device_name=diskInfo[k]['NAME'],
                         device_uuid=diskInfo[k]['UUID'],
                         node_id=node['node_id'],
                         device_type=diskInfo[k]['TYPE'],
                         device_path=diskInfo[k]['KNAME'],
                         filesystem_type=diskInfo[k]['FSTYPE'],
-                        device_mount_point=diskInfo[k]['MOUNTPOINT'])
+                        device_mount_point=diskInfo[k]['MOUNTPOINT'],
+                        size=float(diskInfo[k]['SIZE'])/1073741824,
+                        inuse=diskInfo[k]['INUSE'])
                     log.debug("Saving")
                     sd.save()
         except Exception, e:
             log.exception(e)
             return False
     return True
+
+
+def create_gluster_volume(data, bricklist, hostlist):
+    # create the Volume
+    try:
+        bricks = [item['brick_path'] for item in bricklist]
+        hostlist = [item.node_name for item in hostlist]
+        log.debug("Hostlist: %s" % hostlist)
+        if hostlist:
+            host = random.choice(hostlist)
+            log.debug("Host: %s" % host)
+            rc = salt_wrapper.create_gluster_volume(
+                host, data['volume_name'], bricks, stripe=0,
+                replica=data['replica_count'], transport=[], force=True)
+            if rc is True:
+                return rc
+            #
+            # random host is not able to create volume
+            # Now try to iterate through the list of hosts
+            # in the cluster until
+            # the volume creation is successful
+
+            # No need to send it to host which we already tried
+            hostlist.remove(host)
+            for host in hostlist:
+                rc = salt_wrapper.create_gluster_volume(
+                    host, data['volume_name'], bricks, stripe=0,
+                    replica=data['replica_count'], transport=[], force=True)
+                if rc is True:
+                    return rc
+                    break
+            return rc
+        else:
+            return False
+    except Exception, e:
+        log.exception(e)
+        raise VolumeCreationFailed(data, bricks, str(e))
+
+
+def get_volume_uuid(name, cluster_uuid, hostlist=None):
+    try:
+        if hostlist is None:
+            if cluster_uuid is not None:
+                hostlist = Host.objects.filter(
+                    cluster_id=str(cluster_uuid))
+            else:
+                return None
+
+        host = random.choice(hostlist)
+
+        vols = salt_wrapper.list_gluster_volumes(host.node_name)
+
+        # TO DO: Error handling will be added once the support
+        # is added in the backend
+        # if rc is True:
+        #    return rc
+        #
+        # random host is not able to create volume
+        # Now try to iterate through the list of hosts
+        # in the cluster until
+        # the volume creation is successful
+
+        # No need to send it to host which we already tried
+        # hostlist.remove(host)
+        # for host in hostlist:
+        #     vols = salt_wrapper.list_gluster_volumes(host)
+        #    if rc is True:
+        #        return rc
+
+        if name in vols:
+            return vols[name]['uuid']
+    except Exception, e:
+        log.exception(e)
+
+    return None
+
+
+volume_operations_dict = {
+    OP_VOLUME_START: salt_wrapper.start_gluster_volume,
+    OP_VOLUME_STOP: salt_wrapper.stop_gluster_volume,
+    OP_VOLUME_STATUS: salt_wrapper.get_gluster_volume_status,
+    OP_VOLUME_DELETE: salt_wrapper.delete_gluster_volume,
+    }
+
+
+def volume_operations(volume, op_id):
+    try:
+        log.debug("Volume Name: %s" % volume.volume_name)
+        log.debug("Volume cluster: %s" % volume.cluster_id)
+        hostlist = Host.objects.filter(
+            cluster_id=str(volume.cluster_id))
+        hostlist = [item.node_name for item in hostlist]
+        log.debug("Hostlist: %s" % hostlist)
+        if hostlist:
+            host = random.choice(hostlist)
+            log.debug("Host: %s" % host)
+
+            rc = volume_operations_dict[op_id](host, volume.volume_name)
+            if rc is True:
+                return rc
+            #
+            # random host is not able to execute command
+            # Now try to iterate through the list of hosts
+            # in the cluster until
+            # the execution is successful
+
+            # No need to send it to host which we already tried
+            log.debug("Sending the request failed with host: %s" % host)
+            hostlist.remove(host)
+            for host in hostlist:
+                rc = volume_operations_dict[op_id](host, volume.volume_name)
+                if rc is True:
+                    return rc
+                    break
+                log.debug("Sending the request failed with host: %s" % host)
+            if rc is False:
+                log.critical("Start volume failed: %s" % volume.volume_name)
+            return rc
+        else:
+            return False
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
+def start_gluster_volume(volume_id):
+    try:
+        volume = GlusterVolume.objects.get(pk=str(volume_id))
+        log.debug("Volume Name: %s" % volume.volume_name)
+        rc = volume_operations(volume, OP_VOLUME_START)
+        if rc is True:
+            # update the DB
+            volume.volume_status = STATUS_UP
+            volume.save()
+        return rc
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
+def stop_gluster_volume(volume_id):
+    try:
+        volume = GlusterVolume.objects.get(pk=str(volume_id))
+        rc = volume_operations(volume, OP_VOLUME_STOP)
+        if rc is True:
+            # update the DB
+            volume.volume_status = STATUS_DOWN
+            volume.save()
+        return rc
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
+def delete_gluster_volume(volume_id):
+    try:
+        volume = GlusterVolume.objects.get(pk=str(volume_id))
+        return volume_operations(volume, OP_VOLUME_DELETE)
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
+def add_volume_bricks(volume, bricklist):
+    # Add Bricks
+    try:
+        bricks = [item['brick_path'] for item in bricklist]
+        hostlist = Host.objects.filter(
+            cluster_id=str(volume.cluster_id))
+        hostlist = [item.node_name for item in hostlist]
+        log.debug("Hostlist: %s" % hostlist)
+        if hostlist:
+            host = random.choice(hostlist)
+            log.debug("Host: %s" % host)
+            rc = salt_wrapper.add_volume_bricks(
+                host, volume.volume_name, bricks, force=True)
+            if rc is True:
+                return rc
+            #
+            # random host is not able to add the brick
+            # Now try to iterate through the list of hosts
+            # in the cluster until
+            # the brick addition is successful
+
+            # No need to send it to host which we already tried
+            hostlist.remove(host)
+            for host in hostlist:
+                rc = salt_wrapper.add_volume_bricks(
+                    host, volume.volume_name, bricks, force=True)
+                if rc is True:
+                    return rc
+                    break
+            return rc
+        else:
+            return False
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
+def create_gluster_brick(bricklist):
+    log.debug("In Create Bricks. bricklist %s" % bricklist)
+    # create the Volume
+    failed = []
+    for brick in bricklist:
+        try:
+            host = Host.objects.get(pk=str(brick['node']))
+            if host:
+                storage_device = StorageDevice.objects.get(
+                    pk=str(brick['storage_device']))
+                out = salt_wrapper.create_gluster_brick(
+                    host.node_name, str(storage_device.storage_device_name))
+                if out:
+                    # failed
+                    log.debug("Brick creation failed %s" % out)
+                    failed.append(brick)
+                else:
+                    brick['brick_path'] = \
+                        str(host.cluster_ip) + ':' + '/bricks/' + \
+                        str(storage_device.storage_device_name.split(
+                            '/')[-1]) + '1'
+        except Exception, e:
+            log.exception(e)
+            failed.append(brick)
+    return failed
 
 
 class ClusterCreationFailed(Exception):
@@ -336,3 +584,18 @@ class HostAdditionFailed(Exception):
             nodeNames.append(node['node_name'])
         s = ("%s\nfailednodes: %s\nreason: %s\n")
         return s % (self.message, nodeNames, self.reason)
+
+
+class VolumeCreationFailed(Exception):
+    message = "Volume Creation failed"
+
+    def __init__(self, vol_data, bricklist, reason=''):
+        self.volInfo = vol_data
+        self.bricks = bricklist
+        self.reason = reason
+
+    def __str__(self):
+        s = ("%s\nvolume: %s\nbricks: %s\nreason: %s\n")
+        return s % (self.message,
+                    self.volInfo['volume_name'],
+                    self.bricks, self.reason)

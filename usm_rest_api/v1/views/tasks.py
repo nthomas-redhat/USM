@@ -6,10 +6,12 @@ from celery import current_task
 from usm_rest_api.models import Cluster
 from usm_rest_api.models import Host
 from usm_rest_api.models import StorageDevice
+from usm_rest_api.models import GlusterVolume
 from usm_rest_api.v1.serializers.serializers import CephOSDSerializer
+from usm_rest_api.v1.serializers.serializers import GlusterVolumeSerializer
+from usm_rest_api.v1.serializers.serializers import GlusterBrickSerializer
 
 from usm_rest_api.v1.views import utils as usm_rest_utils
-
 
 log = logging.getLogger('django.request')
 
@@ -402,4 +404,116 @@ def createCephOSD(data):
         log.exception(e)
         raise Exception(
             data, "Failed to add OSD to DB")
+    return {'state': 'SUCCESS'}
+
+
+@shared_task
+def createGlusterVolume(data):
+    log.debug("Inside createGlusterVolume Async Task %s" % data)
+    current_task.update_state(state='STARTED')
+
+    if 'bricks' in data:
+        bricklist = data['bricks']
+        del data['bricks']
+
+    # Return from here if bricklist is empty
+    if len(bricklist) == 0:
+        log.info("Brick List is empty, Volume creation failed")
+        raise usm_rest_utils.VolumeCreationFailed(
+            bricklist, "Brick List is empty, Volume creation failed")
+
+    hostlist = Host.objects.filter(cluster_id=str(data['cluster']))
+    # Prepare the disks for brick creation
+    failed = usm_rest_utils.create_gluster_brick(bricklist)
+    log.critical("Brick creation failed for bricks: %s" % str(failed))
+    # Remove the failed bricks from bricklist
+    bricks = [item for item in bricklist if item not in failed]
+    # Return from here if bricks are empty
+    if len(bricks) == 0:
+        log.info("Brick List is empty, Brick creation failed")
+        raise usm_rest_utils.VolumeCreationFailed(
+            bricklist, "Brick Creation failed")
+    log.debug("Creating the volume with bricks %s", str(bricks))
+    # create the Volume
+    try:
+        rc = usm_rest_utils.create_gluster_volume(data, bricks, hostlist)
+        if rc is False:
+            log.debug("Creating the volume failed")
+            raise usm_rest_utils.VolumeCreationFailed(data, str(bricks))
+    except usm_rest_utils.VolumeCreationFailed, e:
+        log.exception(e)
+        raise
+    # Get UUID of the newly created volume
+    uuid = usm_rest_utils.get_volume_uuid(
+        data['volume_name'], data['cluster'], hostlist)
+    if uuid is None:
+        log.debug("Unable to get the volume UUID")
+        raise usm_rest_utils.VolumeCreationFailed(
+            data, str(bricks), "Unable to get the volume UUID")
+
+    # Persist the volume configuration into DB
+    try:
+        data['volume_id'] = uuid
+        data['volume_status'] = usm_rest_utils.STATUS_CREATED
+        volSerilaizer = GlusterVolumeSerializer(data=data)
+        if volSerilaizer.is_valid():
+            volSerilaizer.save()
+        for brick in bricks:
+            brick['volume'] = uuid
+            brick['brick_status'] = usm_rest_utils.STATUS_UP
+            brickSerilaizer = GlusterBrickSerializer(data=brick)
+            if brickSerilaizer.is_valid():
+                brickSerilaizer.save()
+    except Exception, e:
+        log.exception(e)
+        raise usm_rest_utils.VolumeCreationFailed(
+            data, str(bricks), "Unable to update the DB")
+    return {'state': 'SUCCESS'}
+
+
+@shared_task
+def createGlusterBrick(data):
+    log.debug("Inside createGlusterBrick Async Task %s" % data)
+    current_task.update_state(state='STARTED')
+
+    bricklist = data['bricks']
+    # Return from here if bricklist is empty
+    if len(bricklist) == 0:
+        log.info("Brick List is empty, Brick addition failed")
+        raise Exception(
+            bricklist, "Brick List is empty, Brick addition failed")
+
+    # Prepare the disks for brick creation
+    failed = usm_rest_utils.create_gluster_brick(bricklist)
+    log.critical("Brick creation failed for bricks: %s" % str(failed))
+    # Remove the failed bricks from bricklist
+    bricks = [item for item in bricklist if item not in failed]
+    # Return from here if bricks are empty
+    if len(bricks) == 0:
+        log.info("Brick List is empty, Brick creation failed")
+        raise Exception(
+            bricklist, "Brick Creation failed")
+    
+    # create the Brick
+    try:
+        volume = GlusterVolume.objects.get(pk=str(data['volume']))
+        rc = usm_rest_utils.add_volume_bricks(volume, bricks)
+        if rc is False:
+            raise Exception(
+                bricks, "Brick List is empty, Brick addition failed")
+    except Exception, e:
+        log.exception(e)
+        raise
+
+    # Persist the Bricks into DB
+    try:
+        for brick in bricks:
+            brick['volume'] = str(volume.volume_id)
+            brick['brick_status'] = usm_rest_utils.STATUS_UP
+            brickSerilaizer = GlusterBrickSerializer(data=brick)
+            if brickSerilaizer.is_valid():
+                brickSerilaizer.save()
+    except Exception, e:
+        log.exception(e)
+        raise Exception(str(bricks), "Unable to update the DB")
     return {'state': 'SUCCESS'}

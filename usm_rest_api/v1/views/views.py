@@ -31,6 +31,10 @@ from usm_rest_api.v1.serializers.serializers import HostInterfaceSerializer
 from usm_rest_api.models import HostInterface
 from usm_rest_api.v1.serializers.serializers import CephOSDSerializer
 from usm_rest_api.models import CephOSD
+from usm_rest_api.v1.serializers.serializers import GlusterBrickSerializer
+from usm_rest_api.models import GlusterBrick
+from usm_rest_api.v1.serializers.serializers import GlusterVolumeSerializer
+from usm_rest_api.models import GlusterVolume
 
 from usm_wrappers import utils as usm_wrapper_utils
 
@@ -245,7 +249,7 @@ class ClusterViewSet(viewsets.ModelViewSet):
             jobId = tasks.createCephCluster.delay(data)
 
         log.debug("Exiting create_cluster JobID: %s" % jobId)
-        return Response(str(jobId), status=201)
+        return Response(str(jobId), status=202)
 
     @detail_route(methods=['get'],
                   permission_classes=[permissions.IsAuthenticated])
@@ -254,6 +258,15 @@ class ClusterViewSet(viewsets.ModelViewSet):
         hosts = Host.objects.filter(cluster_id=pk)
         serializer = HostSerializer(hosts, many=True,
                                     context={'request': request})
+        return Response(serializer.data)
+
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def volumes(self, request, pk=None):
+        log.debug("Inside get volumes details")
+        volumes = GlusterVolume.objects.filter(cluster_id=pk)
+        serializer = GlusterVolumeSerializer(volumes, many=True,
+                                             context={'request': request})
         return Response(serializer.data)
 
 
@@ -295,10 +308,11 @@ class HostViewSet(viewsets.ModelViewSet):
             jobId = tasks.createCephHost.delay(data)
 
         log.debug("Exiting ... JobID: %s" % jobId)
-        return Response(str(jobId), status=201)
+        return Response(str(jobId), status=202)
 
     @detail_route(methods=['get'],
-                  permission_classes=[permissions.IsAuthenticated])
+                  permission_classes=[permissions.IsAuthenticated],
+                  url_path='storage-devices')
     def storageDevices(self, request, pk=None):
         storageDevices = StorageDevice.objects.filter(node_id=pk)
         serializer = StorageDeviceSerializer(
@@ -307,7 +321,8 @@ class HostViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @detail_route(methods=['get'],
-                  permission_classes=[permissions.IsAuthenticated])
+                  permission_classes=[permissions.IsAuthenticated],
+                  url_path='host-interfaces')
     def hostInterfaces(self, request, pk=None):
         hostInterfaces = HostInterface.objects.filter(node_id=pk)
         serializer = HostInterfaceSerializer(
@@ -315,18 +330,26 @@ class HostViewSet(viewsets.ModelViewSet):
             context={'request': request})
         return Response(serializer.data)
 
-    @detail_route(methods=['get', 'delete'],
+    @detail_route(methods=['get'],
                   permission_classes=[permissions.IsAuthenticated])
     def osds(self, request, pk=None):
         osds = CephOSD.objects.filter(node_id=pk)
-        serializer = CephOSDSerializer(
-            osds, many=True,
-            context={'request': request})
+        serializer = CephOSDSerializer(osds, many=True,
+                                       context={'request': request})
+        return Response(serializer.data)
+
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def bricks(self, request, pk=None):
+        bricks = GlusterBrick.objects.filter(node_id=pk)
+        serializer = GlusterBrickSerializer(bricks, many=True,
+                                            context={'request': request})
         return Response(serializer.data)
 
 
 class StorageDeviceViewSet(mixins.RetrieveModelMixin,
                            mixins.ListModelMixin,
+                           mixins.UpdateModelMixin,
                            viewsets.GenericViewSet):
     """
     Storage_Device information.
@@ -367,5 +390,104 @@ class CephOSDViewSet(viewsets.ModelViewSet):
             "Inside CephOSDViewSet Create. Request Data: %s" % request.data)
         data = copy.deepcopy(request.data.copy())
         jobId = tasks.createCephOSD.delay(data)
+        log.debug("Exiting ... JobID: %s" % jobId)
+        return Response(str(jobId), status=202)
+
+
+class GlusterVolumeViewSet(viewsets.ModelViewSet):
+    """
+      The resource is used to manage a Volume with a list of bricks.
+      Volume can be created by posting a message as follows:
+
+      {
+      "cluster": "cluster uuid"
+      "volume_name": "NAME",
+      "volume_type": 1,
+      "replica_count": 3,
+      "bricks": [
+          {
+              "node": "node uuid",
+              "brick_path": "node:/dev/vdc",
+              "storage_device": "storage_device uuid",
+          },
+          {
+
+          } ]
+      }
+      """
+    queryset = GlusterVolume.objects.all()
+    serializer_class = GlusterVolumeSerializer
+
+    def create(self, request):
+        log.debug(
+            "Inside GlusterVolumeViewSet Create. Request Data: %s"
+            % request.data)
+        data = copy.deepcopy(request.data.copy())
+        jobId = tasks.createGlusterVolume.delay(data)
+        log.debug("Exiting ... JobID: %s" % jobId)
+        return Response(str(jobId), status=202)
+
+    def destroy(self, request, pk=None):
+        log.debug(
+            "Inside GlusterVolumeViewSet destroy. pk: %s" % pk)
+        rc = usm_rest_utils.delete_gluster_volume(pk)
+        if rc is True:
+            return super(GlusterVolumeViewSet, self).destroy(request, pk)
+        else:
+            return Response(
+                {'message': 'Error while Starting the Volume'}, status=417)
+
+    @detail_route(methods=['get', 'post'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def bricks(self, request, pk=None):
+        if request.method == 'GET':
+            log.debug("Inside get volumes details")
+            bricks = GlusterBrick.objects.filter(volume_id=pk)
+            serializer = GlusterBrickSerializer(bricks, many=True,
+                                                context={'request': request})
+            return Response(serializer.data)
+        elif request.method == 'POST':
+            log.debug("POST")
+            data = copy.deepcopy(request.data.copy())
+            jobId = tasks.createGlusterBrick.delay(data)
+            log.debug("Exiting ... JobID: %s" % jobId)
+            return Response(str(jobId), status=201)
+
+    @detail_route(methods=['get', 'post'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def start(self, request, pk=None):
+        log.debug("Inside get volumes start pk: %s" % pk)
+        rc = usm_rest_utils.start_gluster_volume(pk)
+        if rc is True:
+            return Response({'message': "Success"}, status=200)
+        else:
+            return Response(
+                {'message': 'Error while Starting the Volume'}, status=417)
+
+    @detail_route(methods=['get', 'post'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def stop(self, request, pk=None):
+        log.debug("Inside get volumes stop")
+        rc = usm_rest_utils.stop_gluster_volume(pk)
+        if rc is True:
+            return Response({'message': "Success"}, status=200)
+        else:
+            return Response(
+                {'message': 'Error while Stopping the Volume'}, status=417)
+
+
+class GlusterBrickViewSet(viewsets.ModelViewSet):
+    """
+    Gluster Brick information.
+    """
+    queryset = GlusterBrick.objects.all()
+    serializer_class = GlusterBrickSerializer
+
+    def create(self, request):
+        log.debug(
+            "Inside GlusterBrickViewSet Create. Request Data: %s"
+            % request.data)
+        data = copy.deepcopy(request.data.copy())
+        jobId = tasks.createGlusterBrick.delay(data)
         log.debug("Exiting ... JobID: %s" % jobId)
         return Response(str(jobId), status=201)
