@@ -1,8 +1,16 @@
 import socket
 from jinja2 import Template
+from netaddr import IPNetwork, IPAddress
+import time
+import fnmatch
+import os
+import json
+
 import salt
 from salt import wheel, client
-from netaddr import IPNetwork, IPAddress
+import salt.config
+import salt.utils.event
+import salt.runner
 
 import utils
 
@@ -10,6 +18,12 @@ import utils
 opts = salt.config.master_config('/etc/salt/master')
 master = salt.wheel.WheelClient(opts)
 local = salt.client.LocalClient()
+sevent = salt.utils.event.get_event('master',
+                                    sock_dir=opts['sock_dir'],
+                                    transport=opts['transport'],
+                                    opts=opts)
+runner = salt.runner.RunnerClient(opts)
+DEFAULT_WAIT_TIME = 5
 
 
 def _get_state_result(out):
@@ -61,6 +75,45 @@ def setup_minion(host, fingerprint, username, password):
 def accept_minion(minion_id):
     out = master.call_func('key.accept', match=minion_id)
     return (True if out else False)
+
+
+def get_started_minions(minions=[], timeout=60):
+    def _get_up_minions():
+        up_minions = set(runner.cmd('manage.up', []))
+        if minion_set:
+            return up_minions.intersection(minion_set)
+        else:
+            return up_minions
+
+    minion_set = set(minions)
+    started_minions = _get_up_minions()
+
+    time_spent = 0
+    while timeout > 0:
+        if minion_set and started_minions == minion_set:
+            break
+
+        wait = timeout - time_spent
+        if wait <= 0:
+            break
+        if wait > DEFAULT_WAIT_TIME:
+            wait = DEFAULT_WAIT_TIME
+
+        start_time = time.time()
+        ret = sevent.get_event(wait=wait, full=True, tag='salt/minion')
+        end_time = time.time()
+
+        time_spent += (end_time - start_time)
+
+        if ret is None:
+            started_minions = _get_up_minions()
+        elif fnmatch.fnmatch(ret['tag'], 'salt/minion/*/start'):
+            minion = ret['data']['id']
+            if minion_set and minion not in minion_set:
+                continue
+            started_minions.add(minion)
+
+    return started_minions
 
 
 def get_machine_id(minion_id):
@@ -138,18 +191,156 @@ def check_minion_networks(minions, public_network=None, cluster_network=None,
     return public_network, cluster_network
 
 
+def get_minion_disk_info(minions):
+    '''
+    This function returns disk/storage device info excluding their
+    parent devices
+
+    Output dictionary is
+    {DEV_MAME: {'INUSE': BOOLEAN,
+                'NAME': SHORT_NAME,
+                'KNAME': DEV_NAME,
+                'FSTYPE': FS_TYPE,
+                'MOUNTPOINT': MOUNT_POINT,
+                'UUID': FS_UUID,
+                'PARTUUID': PART_UUID,
+                'MODEL': MODEL_STRING,
+                'SIZE': SIZE_BYTES,
+                'TYPE': TYPE,
+                'PKNAME', PARENT_DEV_NAME,
+                'VENDOR': VENDOR_STRING}, ...}
+    '''
+
+    columes = 'NAME,KNAME,FSTYPE,MOUNTPOINT,UUID,PARTUUID,MODEL,SIZE,TYPE,' \
+              'PKNAME,VENDOR'
+    keys = columes.split(',')
+    lsblk = ("lsblk --all --bytes --noheadings --output='%s' --path --raw" %
+             columes)
+    out = local.cmd(minions, 'cmd.run', [lsblk], expr_form='list')
+
+    minion_dev_info = {}
+    for minion in minions:
+        lsblk_out = out.get(minion)
+
+        if not lsblk_out:
+            minion_dev_info[minion] = {}
+            continue
+
+        devlist = map(lambda line: dict(zip(keys, line.split(' '))),
+                      lsblk_out.splitlines())
+
+        parents = set([d['PKNAME'] for d in devlist])
+
+        dev_info = {}
+        for d in devlist:
+            in_use = True
+
+            if d['TYPE'] == 'disk':
+                if d['KNAME'] in parents:
+                    # skip it
+                    continue
+                else:
+                    in_use = False
+            elif not d['FSTYPE']:
+                in_use = False
+
+            d.update({'INUSE': in_use})
+            dev_info.update({d['KNAME']: d})
+
+        minion_dev_info[minion] = dev_info
+
+    return minion_dev_info
+
+
 def peer(gluster_node, new_node):
     gluster_minion = utils.resolve_ip_address(gluster_node)
     new_minion = utils.resolve_ip_address(new_node)
     out = local.cmd(gluster_minion, 'glusterfs.peer', [new_minion])
-    if out and 'success' in out[gluster_minion]:
+    if out and out[gluster_minion] == True:
         return True
     else:
         return False
 
 
+def create_gluster_brick(minion, device, fs_type='xfs', brick_name=None,
+                         mount_point=None):
+    if not device.startswith('/'):
+        device = '/dev/' + device
+
+    if not brick_name:
+        brick_name = os.path.basename(device) + '1'
+
+    pillar_data = {}
+    pillar_data[minion] = {'device': device,
+                           'fs_type': fs_type,
+                           'brick_name': brick_name}
+    pillar = {'usm': pillar_data}
+
+    out = run_state(local, [minion], 'create_gluster_brick', expr_form='list',
+                    kwarg={'pillar': pillar})
+    return out
+
+
+def create_gluster_volume(minion, name, bricks, stripe=0, replica=0,
+                          transport=[], force=False):
+    out = local.cmd(minion, 'glusterfs.create', [name, bricks, stripe, replica,
+                                                 False, transport, force])
+    volume_id = out.get(minion, {}).get('uuid')
+    if volume_id:
+        return volume_id
+    else:
+        False
+
+
+def list_gluster_volumes(minion):
+    out = local.cmd(minion, 'glusterfs.list_volumes')
+    return out.get(minion)
+
+
+def get_gluster_volume_status(minion, name):
+    out = local.cmd(minion, 'glusterfs.status', [name])
+    return out.get(minion)
+
+
+def start_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.start_volume', [name])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def stop_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.stop_volume', [name])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def delete_gluster_volume(minion, name):
+    out = local.cmd(minion, 'glusterfs.delete', [name])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def add_gluster_bricks(minion, name, bricks, stripe=0, replica=0, force=False):
+    out = local.cmd(minion, 'glusterfs.add_volume_bricks',
+                    [name, bricks, replica, stripe, force])
+    if out and out[minion] == True:
+        return True
+    else:
+        return False
+
+
+def get_gluster_volume_usage(minion, name):
+    out = local.cmd(minion, 'glusterfs.get_volume_usage', [name])
+    return out.get(minion, {})
+
+
 import ConfigParser
-import os
 import string
 
 _CEPH_CLUSTER_CONF_DIR = '/srv/salt/usm/conf/ceph'
@@ -187,8 +378,8 @@ def _gen_ceph_cluster_conf(conf_file, cluster_name, fsid, monitors,
                            osd_journal_size = 1024,
                            osd_pool_default_size = 2,
                            osd_pool_default_min_size = 1,
-                           osd_pool_default_pg_num = 333,
-                           osd_pool_default_pgp_num = 333,
+                           osd_pool_default_pg_num = 128,
+                           osd_pool_default_pgp_num = 128,
                            osd_crush_chooseleaf_type = 1):
     '''
     :: monitors = {ID: {'name': SHORT_HOSTNAME, 'address': IP_ADDR,
@@ -412,28 +603,23 @@ def add_ceph_osd(cluster_name, minions):
     if out:
         return out
 
-    out = local.cmd(minions, 'state.single',
-                    ['cmd.run', 'ceph-disk activate-all'],
+    out = local.cmd(minions, 'cmd.run_all', ['ceph-disk activate-all'],
                     expr_form='list')
 
     osd_map = {}
     failed_minions = {}
     for minion, v in out.iteritems():
         osds = []
-        failed_results = {}
-        for id, res in v.iteritems():
-            if not res['result']:
-                failed_results.update({id: res})
 
-            stdout = res['changes']['stdout']
-            for line in stdout.splitlines():
-                if line.startswith('=== '):
-                    osds.append(line.split('=== ')[1].strip())
+        if v.get('retcode') != 0:
+            failed_minions[minion] = v
+            continue
+
+        for line in v['stdout'].splitlines():
+            if line.startswith('=== '):
+                osds.append(line.split('=== ')[1].strip())
+                break
         osd_map[minion] = osds
-        if not v:
-            failed_minions[minion] = {}
-        if failed_results:
-            failed_minions[minion] = failed_results
 
     config.set('global', 'cluster network', cluster_network)
     for minion, osds in osd_map.iteritems():
@@ -451,3 +637,30 @@ def add_ceph_osd(cluster_name, minions):
     sync_ceph_conf(cluster_name, minions)
 
     return failed_minions
+
+
+def create_ceph_pool(monitor, cluster_name, pool_name, pg_num=0):
+    cmd = "ceph --cluster %s osd pool create %s" % (cluster_name, pool_name)
+    if pg_num:
+        cmd += " %s" % pg_num
+    else:
+        cmd += " 128"
+
+    out = local.cmd(monitor, 'cmd.run_all', [cmd])
+
+    if out.get(monitor, {}).get('retcode') == 0:
+        return True
+    else:
+        return False
+
+
+def list_ceph_pools(monitor, cluster_name):
+    cmd = "ceph --cluster %s -f json osd lspools" % cluster_name
+
+    out = local.cmd(monitor, 'cmd.run_all', [cmd])
+
+    if out.get(monitor, {}).get('retcode') == 0:
+        stdout = out.get(monitor, {}).get('stdout')
+        return [pool['poolname'] for pool in json.loads(stdout)]
+    else:
+        return False
