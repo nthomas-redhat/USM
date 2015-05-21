@@ -25,15 +25,15 @@ python-redis=2.10.3
 
 salt-master =2014.7.1
 
-postgresql93=9.3.6
+postgresql=9.3.6
 
-postgresql93-server=9.3.6
+postgresql-server=9.3.6
 
-postgresql93-contrib=9.3.6
+postgresql-contrib=9.3.6
 
-postgresql93-libs=9.3.6
+postgresql-libs=9.3.6
 
-postgresql93-devel=9.3.6
+postgresql-devel=9.3.6
 
 psycopg2=2.6(This needs to installed after postgress installation)
 
@@ -41,7 +41,9 @@ python-netaddr=0.7.12
 
 python-cpopen=1.3
 
+gevent==1.0.1
 
+psycogreen==1.0
 
 
 
@@ -50,7 +52,7 @@ SETUP
 
 Initialize the DB
 -----------------
-Execute /usr/pgsql-9.3/bin/postgresql93-setup initdb
+Execute /usr/bin/postgresql-setup initdb
 
 Configure PostgreSQL to accept network connection
 -------------------------------------------------
@@ -63,9 +65,9 @@ Locate: 127.0.0.1/32 and ::1/128 and allow "password" authentication for IPv4 an
 
 Enable and start the postgresSQL service
 ----------------------------------------
-systemctl enable postgresql-9.3
+systemctl enable postgresql
 
-systemctl start postgresql-9.3
+systemctl start postgresql
 
 Create the Database,User and grant privileges
 ---------------------------------------------
@@ -133,7 +135,17 @@ cp celery/init.d/celeryd /etc/init.d
 
 Create the logs directory - mkdir -p -m 2755 /var/log/celery
 
-Start the celery service - service celery start
+Start the celery service - service celeryd start
+
+Salt Setup
+----------
+copy the template file -
+
+cp $USM_HOME/usm_wrappers/setup-minion.sh.template $USM_HOME
+
+copy the sls files -
+
+cp $USM_HOME/usm_wrappers/*.sls /srv/salt
 
 Starting the USM Application
 ----------------------------

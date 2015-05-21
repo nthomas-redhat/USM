@@ -1,15 +1,19 @@
 import logging
+import random
+import time
 
 from celery import shared_task
 from celery import current_task
 
 from usm_rest_api.models import Cluster
 from usm_rest_api.models import Host
-from usm_rest_api.models import StorageDevice
 from usm_rest_api.models import GlusterVolume
 from usm_rest_api.v1.serializers.serializers import CephOSDSerializer
 from usm_rest_api.v1.serializers.serializers import GlusterVolumeSerializer
 from usm_rest_api.v1.serializers.serializers import GlusterBrickSerializer
+from usm_rest_api.v1.serializers.serializers import CephPoolSerializer
+
+from usm_wrappers import salt_wrapper
 
 from usm_rest_api.v1.views import utils as usm_rest_utils
 
@@ -43,22 +47,40 @@ def createCephCluster(cluster_data):
         raise usm_rest_utils.ClusterCreationFailed(
             nodelist, str(e))
 
-    # Setup the host communication and update the DB
-    current_task.update_state(
-        state='STARTED', meta={'state': 'ESTABLISH_HOST_COMMUNICATION'})
-    minionIds, failedNodes = usm_rest_utils.setup_transport_and_update_db(
-        cluster_data, nodelist)
+    # Push the cluster configuration to nodes
+    log.debug("Push Cluster config to Nodes")
+    failed_minions = salt_wrapper.setup_cluster_grains(
+        [item['node_name'] for item in nodelist],
+        cluster_data)
+    if failed_minions:
+        #reload the salt_wrapper to refresh connections
+        reload(salt_wrapper)
+        # Retry couple of times
+        for count in range(0, 3):
+            log.debug("Retrying config push")
+            time.sleep(3)
+            failed_minions = salt_wrapper.setup_cluster_grains(
+                failed_minions, cluster_data)
+            if not failed_minions:
+                log.debug("Success after retrying")
+                break
+    if failed_minions:
+        log.debug('Config Push failed for minions %s' % failed_minions)
+        # Add the failed minions to failed Nodes list
+        failedNodes = [
+            item for item in nodelist if item['node_name'] in failed_minions]
+        log.debug("failedNodes %s" % failedNodes)
 
     log.debug("Setting up the Ceph Cluster")
     current_task.update_state(
-        state='STARTED', meta={'state': 'SETUP_GLUSTER_CLUSTER'})
+        state='STARTED', meta={'state': 'SETUP_CEPH_CLUSTER'})
     #
     # Send only the successful nodes
     #
     successNodes = [item for item in nodelist if item not in failedNodes]
     log.debug("Node List %s" % successNodes)
     status = usm_rest_utils.create_ceph_cluster(
-        successNodes, cluster_data, minionIds)
+        successNodes, cluster_data)
     # if status is False then cluster creation Failed, no need to
     # proceed further.
     if not status:
@@ -76,10 +98,10 @@ def createCephCluster(cluster_data):
         state='STARTED', meta={'state': 'UPDATE_CLUSTER_STATUS'})
     try:
         #
-        # Update the status of the successful Nodes in DB
+        # Update the host in DB
         #
-        usm_rest_utils.update_host_status(
-            successNodes, usm_rest_utils.HOST_STATUS_ACTIVE)
+        usm_rest_utils.update_host_details(
+            successNodes, str(cluster_data['cluster_id']))
         # Update the status of Cluster to Active if atlest two nodes
         # are added successfully
         # TODO - this is temporary. We need to get the cluster status
@@ -93,8 +115,8 @@ def createCephCluster(cluster_data):
         log.exception(e)
 
     # Discover the Disks from the nodes.
-    if not usm_rest_utils.discover_disks(successNodes, minionIds):
-        log.critical("Disvovery of disks failed")
+    # if not usm_rest_utils.discover_disks(successNodes, minionIds):
+    #    log.critical("Disvovery of disks failed")
 
     if noOfNodes == len(failedNodes):
         log.critical("Cluster creation Failed %s and Nodelist %s" %
@@ -139,11 +161,29 @@ def createGlusterCluster(cluster_data):
         raise usm_rest_utils.ClusterCreationFailed(
             nodelist, str(e))
 
-    # Setup the host communication and update the DB
-    current_task.update_state(
-        state='STARTED', meta={'state': 'ESTABLISH_HOST_COMMUNICATION'})
-    minionIds, failedNodes = usm_rest_utils.setup_transport_and_update_db(
-        cluster_data, nodelist)
+    # Push the cluster configuration to nodes
+    log.debug("Push Cluster config to Nodes")
+    failed_minions = salt_wrapper.setup_cluster_grains(
+        [item['node_name'] for item in nodelist],
+        cluster_data)
+    if failed_minions:
+        #reload the salt_wrapper to refresh connections
+        reload(salt_wrapper)
+        # Retry couple of times
+        for count in range(0, 3):
+            log.debug("Retrying config push")
+            time.sleep(3)
+            failed_minions = salt_wrapper.setup_cluster_grains(
+                list(failed_minions), cluster_data)
+            if not failed_minions:
+                log.debug("Success after retrying")
+                break
+    if failed_minions:
+        log.debug('Config Push failed for minions %s' % failed_minions)
+        # Add the failed minions to failed Nodes list
+        failedNodes = [
+            item for item in nodelist if item['node_name'] in failed_minions]
+        log.debug("failedNodes %s" % failedNodes)
 
     log.debug("peer probe start")
     current_task.update_state(
@@ -163,25 +203,33 @@ def createGlusterCluster(cluster_data):
         state='STARTED', meta={'state': 'UPDATE_CLUSTER_STATUS'})
     try:
         #
-        # Update the status of the successful Nodes in DB
+        # Update Nodes in DB
         #
-        usm_rest_utils.update_host_status(
-            successNodes, usm_rest_utils.HOST_STATUS_ACTIVE)
+        usm_rest_utils.update_host_details(
+            successNodes, str(cluster_data['cluster_id']))
 
         # Update the status of Cluster to Active if atlest two nodes
         # are added successfully
         #
-        if len(successNodes) >= 2:
+        if len(successNodes) == 0:
+            usm_rest_utils.update_cluster_status(
+                str(cluster_data['cluster_id']),
+                usm_rest_utils.STATUS_FAILED)
+        elif len(successNodes) >= 2:
             usm_rest_utils.update_cluster_status(
                 str(cluster_data['cluster_id']),
                 usm_rest_utils.STATUS_ACTIVE_AND_AVAILABLE)
+        else:
+            usm_rest_utils.update_cluster_status(
+                str(cluster_data['cluster_id']),
+                usm_rest_utils.STATUS_INACTIVE)
 
     except Exception, e:
         log.exception(e)
 
     # Discover the Disks from the nodes.
-    if not usm_rest_utils.discover_disks(successNodes, minionIds):
-        log.critical("Disvovery of disks failed")
+    # if not usm_rest_utils.discover_disks(successNodes, minionIds):
+    #    log.critical("Disvovery of disks failed")
 
     if noOfNodes == len(failedNodes):
         log.critical("Cluster creation Failed %s and Nodelist %s" %
@@ -206,6 +254,7 @@ def createCephHost(data):
     cluster = None
     cluster_data = None
     hostlist = None
+    failedNodes = []
 
     # Get the cluster configuration
     try:
@@ -224,17 +273,28 @@ def createCephHost(data):
         raise usm_rest_utils.HostAdditionFailed(
             [data], str(e))
 
-    # Setup the host communication
-    current_task.update_state(
-        state='STARTED', meta={'state': 'ESTABLISH_HOST_COMMUNICATION'})
-    minionIds, failedNodes = usm_rest_utils.setup_transport_and_update_db(
-        cluster_data, [data])
-    if failedNodes:
-        log.debug("Failed to Establish Transport with Node %s" % failedNodes)
+    # Push the cluster configuration to nodes
+    log.debug("Push Cluster config to Nodes")
+    failed_minions = salt_wrapper.setup_cluster_grains(
+        [item['node_name'] for item in [data]],
+        cluster_data)
+    if failed_minions:
+        #reload the salt_wrapper to refresh connections
+        reload(salt_wrapper)
+        # Retry couple of times
+        for count in range(0, 3):
+            log.debug("Retrying config push")
+            time.sleep(3)
+            failed_minions = salt_wrapper.setup_cluster_grains(
+                failed_minions, cluster_data)
+            if not failed_minions:
+                log.debug("Success after retrying")
+                break
+    if failed_minions:
+        log.debug('Config Push failed for minions %s' % failed_minions)
         raise usm_rest_utils.HostAdditionFailed(
-            [data], "Failed to Establish Transport with Node")
-    log.debug("setup_transport_and_update_db done. minionIds %s failedNodes \
-              %s" % (minionIds, failedNodes))
+            [data], "Failed to push config to Node")
+
     # Add the Host to cluster based on the node type
     # ie if the node type is monitor, then create a monitor
     # else create the OSD
@@ -243,12 +303,8 @@ def createCephHost(data):
         current_task.update_state(
             state='STARTED', meta={'state': 'ADD_MONITOR_TO_CLUSTER'})
         failedNodes = usm_rest_utils.add_ceph_monitors(
-            [data], cluster_data, minionIds)
+            [data], cluster_data)
     elif data['node_type'] == usm_rest_utils.HOST_TYPE_OSD:
-        # current_task.update_state(
-        # state='STARTED', meta={'state':'ADD_OSD_TO_CLUSTER'})
-        # failedNodes = usm_rest_utils.add_ceph_osds(
-        #    [data], cluster_data, minionIds)
         # Now we will not add the OSDs to the cluster at this stage
         # It will be done with another api call
         pass
@@ -262,10 +318,10 @@ def createCephHost(data):
         state='STARTED', meta={'state': 'UPDATE_CLUSTER_STATUS'})
     try:
             #
-            # Update the status of the successful Nodes in DB
+            # Update the Nodes in DB
             #
-            usm_rest_utils.update_host_status(
-                [data], usm_rest_utils.HOST_STATUS_ACTIVE)
+            usm_rest_utils.update_host_details(
+                [data], str(cluster_data['cluster_id']))
             #
             # if cluster is not active available, check whether the cluster
             # has atleast one active nodes and set the cluster
@@ -286,8 +342,8 @@ def createCephHost(data):
             [data], str(e))
 
     # Discover the Disks from the nodes.
-    if not usm_rest_utils.discover_disks([data], minionIds):
-        log.critical("Disvovery of disks failed")
+    # if not usm_rest_utils.discover_disks([data], minionIds):
+    #    log.critical("Disvovery of disks failed")
 
     log.debug("Adding Host successful")
     return {'state': 'SUCCESS'}
@@ -318,17 +374,28 @@ def createGlusterHost(data):
         raise usm_rest_utils.HostAdditionFailed(
             [data], str(e))
 
-    # Setup the host communication
-    current_task.update_state(
-        state='STARTED', meta={'state': 'ESTABLISH_HOST_COMMUNICATION'})
-    minionIds, failedNodes = usm_rest_utils.setup_transport_and_update_db(
-        cluster_data, [data])
-    if failedNodes:
-        log.debug("Failed to Establish Transport with Node %s" % failedNodes)
+    # Push the cluster configuration to nodes
+    log.debug("Push Cluster config to Nodes")
+    failed_minions = salt_wrapper.setup_cluster_grains(
+        [item['node_name'] for item in [data]],
+        cluster_data)
+    if failed_minions:
+        #reload the salt_wrapper to refresh connections
+        reload(salt_wrapper)
+        # Retry couple of times
+        for count in range(0, 3):
+            log.debug("Retrying config push")
+            time.sleep(3)
+            failed_minions = salt_wrapper.setup_cluster_grains(
+                failed_minions, cluster_data)
+            if not failed_minions:
+                log.debug("Success after retrying")
+                break
+    if failed_minions:
+        log.debug('Config Push failed for minions %s' % failed_minions)
         raise usm_rest_utils.HostAdditionFailed(
-            [data], "Failed to Establish Transport with Node")
-    log.debug("setup_transport_and_update_db done. minionIds %s failedNodes \
-              %s" % (minionIds, failedNodes))
+            [data], "Failed to push config to Node")
+
     # Peer probe
     log.debug("peer probe start")
     current_task.update_state(
@@ -344,10 +411,10 @@ def createGlusterHost(data):
         state='STARTED', meta={'state': 'UPDATE_CLUSTER_STATUS'})
     try:
             #
-            # Update the status of the successful Nodes in DB
+            # Update the Nodes in DB
             #
-            usm_rest_utils.update_host_status(
-                [data], usm_rest_utils.HOST_STATUS_ACTIVE)
+            usm_rest_utils.update_host_details(
+                [data], str(cluster_data['cluster_id']))
             #
             # if cluster is not active available, check whether the cluster
             # has atleast two active nodes and set the cluster
@@ -366,8 +433,8 @@ def createGlusterHost(data):
             [data], str(e))
 
     # Discover the Disks from the nodes.
-    if not usm_rest_utils.discover_disks([data], minionIds):
-        log.critical("Disvovery of disks failed")
+    # if not usm_rest_utils.discover_disks([data], minionIds):
+    #    log.critical("Disvovery of disks failed")
 
     log.debug("Adding Host successful")
     return {'state': 'SUCCESS'}
@@ -378,32 +445,40 @@ def createCephOSD(data):
     log.debug("Inside createCephOSD Async Task %s" % data)
     current_task.update_state(state='STARTED')
 
-    node = Host.objects.get(pk=str(data['node']))
+    osdlist = []
+    if 'osds' in data:
+        osdlist = data['osds']
 
-    storage_device = StorageDevice.objects.get(pk=str(data['storage_device']))
+    # Return from here if nodelist is empty
+    if len(osdlist) == 0:
+        log.info("OSD List is empty, Pool creation failed")
+        raise Exception(
+            "OSD List is empty, OSD creation failed")
+
+    # Send the request to add the OSD
     current_task.update_state(
         state='STARTED', meta={'state': 'ADD_OSD_TO_CLUSTER'})
-
-    node_data = {'cluster_ip': str(node.cluster_ip),
-                 'public_ip': str(node.public_ip),
-                 'devices': {str(storage_device.storage_device_name): 'xfs'}}
-    # Send the request to add the OSD
-    log.debug("Creating the OSD")
-    failedNodes = usm_rest_utils.add_ceph_osd(
-        node_data,  str(node.cluster.cluster_name), str(node.node_name))
+    log.debug("Creating the OSDs")
+    failedNodes = usm_rest_utils.add_ceph_osds(osdlist)
     if failedNodes:
-        log.debug("Failed to add OSD to cluster %s" % failedNodes)
-        raise Exception(data, "Failed to add OSD to cluster")
+        osdlist = [item for item in osdlist if item not in failedNodes]
+
     # Update the DB
+    current_task.update_state(
+        state='STARTED', meta={'state': 'UPDATE_DB'})
     log.debug("Updating the DB")
-    try:
-        osdSerilaizer = CephOSDSerializer(data=data)
-        if osdSerilaizer.is_valid():
-            osdSerilaizer.save()
-    except Exception, e:
-        log.exception(e)
-        raise Exception(
-            data, "Failed to add OSD to DB")
+    for osd in osdlist:
+        try:
+            osdSerilaizer = CephOSDSerializer(data=osd)
+            if osdSerilaizer.is_valid():
+                osdSerilaizer.save()
+        except Exception, e:
+            log.exception(e)
+            failedNodes.append(osd)
+    if failedNodes:
+        log.debug("Failed devices %s" % failedNodes)
+        raise Exception(failedNodes, "Failed to add few OSDs to cluster")
+
     return {'state': 'SUCCESS'}
 
 
@@ -493,7 +568,7 @@ def createGlusterBrick(data):
         log.info("Brick List is empty, Brick creation failed")
         raise Exception(
             bricklist, "Brick Creation failed")
-    
+
     # create the Brick
     try:
         volume = GlusterVolume.objects.get(pk=str(data['volume']))
@@ -516,4 +591,93 @@ def createGlusterBrick(data):
     except Exception, e:
         log.exception(e)
         raise Exception(str(bricks), "Unable to update the DB")
+    return {'state': 'SUCCESS'}
+
+
+@shared_task
+def acceptHosts(data):
+    log.debug("Inside accepthosts Async Task %s" % data)
+    current_task.update_state(state='STARTED')
+
+    if 'nodes' in data:
+        nodelist = data['nodes']
+    else:
+        log.info("Node List is empty")
+        raise Exception(
+            data, "Node List is empty, Accept Hosts failed")
+
+    minionIds, failedNodes = usm_rest_utils.setup_transport_and_update_db(
+        nodelist)
+    successNodes = [item for item in nodelist if item not in failedNodes]
+
+    # Discover the Disks from the nodes.
+    if not usm_rest_utils.discover_disks(
+            successNodes):
+        log.critical("Disvovery of disks failed")
+
+    if failedNodes:
+        return {'state': 'FAILURE',
+                'failednodes': str(failedNodes),
+                'reason': 'Accept Failed for few hosts'}
+
+    return {'state': 'SUCCESS'}
+
+
+@shared_task
+def createCephPool(data):
+    log.debug("Inside createCephPool Async Task %s" % data)
+    current_task.update_state(state='STARTED')
+
+    poollist = []
+    if 'pools' in data:
+        poollist = data['pools']
+
+    # Return from here if nodelist is empty
+    if len(poollist) == 0:
+        log.info("Pool List is empty, Pool creation failed")
+        raise Exception(
+            "Pool List is empty, Pool creation failed")
+
+    monitors = Host.objects.filter(cluster_id=str(data['cluster'])).filter(
+        node_type__exact=usm_rest_utils.HOST_TYPE_MONITOR)
+    if not monitors:
+        log.critical(
+            "No monitors present in the cluster. Pool creation failed")
+        raise Exception(
+            "No monitors present in the cluster. Pool creation failed")
+    # Send the request to add the OSD
+    current_task.update_state(
+        state='STARTED', meta={'state': 'CREATE_POOL'})
+    log.debug("Creating the Pools")
+    failed = []
+    for pool in poollist:
+        try:
+            pool['cluster'] = data['cluster']
+            monitor = random.choice(monitors)
+            if 'pg_num' in pool:
+                if pool['pg_num'] is None:
+                    pool['pg_num'] = 128
+            else:
+               pool['pg_num'] = 128
+
+            result = salt_wrapper.create_ceph_pool(
+                monitor.node_name, monitor.cluster.cluster_name,
+                pool['pool_name'], pool['pg_num'])
+            log.debug("Pool:%s" % pool)
+            if result:
+                # update DB
+                log.debug("Updating the DB")
+                poolSerilaizer = CephPoolSerializer(data=pool)
+                if poolSerilaizer.is_valid():
+                    poolSerilaizer.save()
+            else:
+                failed.append(pool)
+        except Exception, e:
+            log.exception(e)
+            failed.append(pool)
+
+    if failed:
+        log.debug("Failed requests %s" % failed)
+        raise Exception(failed, "Failed to create few pools")
+
     return {'state': 'SUCCESS'}

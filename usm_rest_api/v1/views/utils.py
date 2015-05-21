@@ -1,6 +1,7 @@
 import random
 import logging
 import uuid
+import time
 
 from usm_rest_api.models import Cluster
 from usm_rest_api.v1.serializers.serializers import ClusterSerializer
@@ -25,6 +26,8 @@ STORAGE_TYPE_OBJECT = 3
 STATUS_INACTIVE = 1
 STATUS_ACTIVE_NOT_AVAILABLE = 2
 STATUS_ACTIVE_AND_AVAILABLE = 3
+STATUS_CREATING = 4
+STATUS_FAILED = 5
 HOST_TYPE_MONITOR = 1
 HOST_TYPE_OSD = 2
 HOST_TYPE_MIXED = 3
@@ -96,7 +99,7 @@ def create_cluster(cluster_data):
         raise e
 
 
-def setup_transport_and_update_db(cluster_data, nodelist):
+def setup_transport_and_update_db(nodelist):
     log.debug("Inside setup_transport_and_update_db function")
     failedNodes = []
 
@@ -150,7 +153,18 @@ def setup_transport_and_update_db(cluster_data, nodelist):
                 node['node_id'] = salt_wrapper.get_machine_id(
                     minionIds[node['management_ip']])
                 log.debug("Node Id: %s" % node['node_id'])
-                node['cluster'] = str(cluster_data['cluster_id'])
+                if node['node_id'] is None:
+                    reload(salt_wrapper)
+                    # Retry couple of times
+                    for count in range(0, 3):
+                        log.debug("Retrying")
+                        time.sleep(3)
+                        node['node_id'] = salt_wrapper.get_machine_id(
+                            minionIds[node['management_ip']])
+                        if node['node_id'] is not None:
+                            log.debug("Got NodeId after retrying")
+                            break
+                # node['cluster'] = str(cluster_data['cluster_id'])
                 hostSerilaizer = HostSerializer(data=node)
 
                 if hostSerilaizer.is_valid():
@@ -174,6 +188,7 @@ def setup_transport_and_update_db(cluster_data, nodelist):
         except Exception, e:
             log.exception(e)
             failedNodes.append(node)
+            continue
         # Remove the node from discovered nodes if present
         try:
             discovered = DiscoveredNode.objects.get(
@@ -187,27 +202,31 @@ def setup_transport_and_update_db(cluster_data, nodelist):
         except Exception, e:
             log.exception(e)
 
-    # Push the cluster configuration to nodes
-    log.debug("Push Cluster config to Nodes")
-    failed_minions = salt_wrapper.setup_cluster_grains(
-        minionIds.values(), cluster_data)
-    if failed_minions:
-        log.debug('Config Push failed for minions %s' % failed_minions)
-        # Add the failed minions to failed Nodes list
-        for node in nodelist:
-            if usm_wrapper_utils.resolve_ip_address(
-                    node['management_ip']) in failed_minions:
-                failedNodes.append(node)
-    log.debug("failedNodes %s" % failedNodes)
-
     return minionIds, failedNodes
 
 
-def update_host_status(nodes, status):
+def update_host_details(nodes, cluster_id):
+    cluster = Cluster.objects.get(pk=cluster_id)
     for node in nodes:
-        glusterNode = Host.objects.get(pk=str(node['node_id']))
-        glusterNode.node_status = status
+        glusterNode = Host.objects.filter(
+            node_name__exact=node['node_name']).filter(
+            management_ip__exact=node['management_ip'])[0]
+        glusterNode.node_status = HOST_STATUS_ACTIVE
+        if glusterNode.cluster is None:
+            glusterNode.cluster = cluster
+        if 'cluster_ip' in node:
+            glusterNode.cluster_ip = node['cluster_ip']
+        if 'public_ip' in node:
+            glusterNode.public_ip = node['public_ip']
+        if 'node_type' in node:
+            glusterNode.node_type = node['node_type']
         glusterNode.save()
+
+
+def update_host_status(host_id, status):
+    host = Host.objects.get(pk=host_id)
+    host.node_status = status
+    host.save()
 
 
 def update_cluster_status(cluster_id, status):
@@ -216,7 +235,7 @@ def update_cluster_status(cluster_id, status):
     cluster.save()
 
 
-def create_ceph_cluster(nodelist, cluster_data, minionIds):
+def create_ceph_cluster(nodelist, cluster_data):
     status = True
     if nodelist:
         minions = {}
@@ -225,7 +244,7 @@ def create_ceph_cluster(nodelist, cluster_data, minionIds):
                 continue
             nodeInfo = {'public_ip': node['public_ip'],
                         'cluster_ip': node['cluster_ip']}
-            minions[minionIds[node['management_ip']]] = nodeInfo
+            minions[node['node_name']] = nodeInfo
         log.debug("cluster_name %s" % cluster_data['cluster_name'])
         log.debug("cluster_id %s" % cluster_data['cluster_id'])
         log.debug("minions %s" % minions)
@@ -259,7 +278,31 @@ def add_ceph_osd(node, cluster_name, minionId):
     return failedNodes
 
 
-def add_ceph_monitors(nodelist, cluster_data, minionIds):
+def add_ceph_osds(osdlist):
+    failedNodes = []
+    for osd in osdlist:
+        try:
+            node = Host.objects.get(pk=str(osd['node']))
+
+            storage_device = StorageDevice.objects.get(
+                pk=str(osd['storage_device']))
+            node_data = {'cluster_ip': str(node.cluster_ip),
+                         'public_ip': str(node.public_ip),
+                         'devices': {str(storage_device.storage_device_name): 'xfs'}}  # noqa
+            failed = salt_wrapper.add_ceph_osd(
+                str(node.cluster.cluster_name), {node.node_name: node_data})
+            if failed:
+                log.debug("Failed:%s" % failed)
+                if node.node_name in failed.keys():
+                    failedNodes.append(osd)
+        except Exception, e:
+            log.exception(e)
+            failedNodes.append(osd)
+
+    return failedNodes
+
+
+def add_ceph_monitors(nodelist, cluster_data):
     failedNodes = []
     if nodelist:
         for node in nodelist:
@@ -267,10 +310,10 @@ def add_ceph_monitors(nodelist, cluster_data, minionIds):
             try:
                 failed = salt_wrapper.add_ceph_mon(
                     cluster_data['cluster_name'],
-                    {minionIds[node['management_ip']]: nodeInfo})
+                    {node['node_name']: nodeInfo})
                 if failed:
                     failedNodes += _map_failed_nodes(
-                        failed, nodelist, minionIds)
+                        failed, nodelist)
             except Exception, e:
                 log.exception(e)
                 failedNodes.append(node)
@@ -295,21 +338,18 @@ def _map_failed_nodes(failed, nodelist, minionIds):
         log.debug("Failed:" % failed)
         failedlist = failed.keys()
         for node in nodelist:
-            if minionIds[node['management_ip']] in failedlist:
+            if node['node_name'] in failedlist:
                 failedNodes.append(node)
     return failedNodes
 
 
-def discover_disks(nodelist, minionIds):
-    minions = []
+def discover_disks(nodelist):
+    minions = [item['node_name'] for item in nodelist]
     if nodelist:
-        for node in nodelist:
-            minions.append(minionIds[node['management_ip']])
-        log.debug("Monions %s" % minions)
         try:
             disksInfo = salt_wrapper.get_minion_disk_info(minions)
             for node in nodelist:
-                diskInfo = disksInfo[minionIds[node['management_ip']]]
+                diskInfo = disksInfo[node['node_name']]
                 for k in diskInfo:
                     log.debug("Disks: %s" % diskInfo[k])
                     log.debug("node UUID: %s" % node['node_id'])
@@ -340,11 +380,13 @@ def create_gluster_volume(data, bricklist, hostlist):
         if hostlist:
             host = random.choice(hostlist)
             log.debug("Host: %s" % host)
+            # reload(salt_wrapper)
             rc = salt_wrapper.create_gluster_volume(
                 host, data['volume_name'], bricks, stripe=0,
                 replica=data['replica_count'], transport=[], force=True)
-            if rc is True:
-                return rc
+            if rc:
+                return True
+            log.debug("Request failed with Host: %s" % host)
             #
             # random host is not able to create volume
             # Now try to iterate through the list of hosts
@@ -354,13 +396,15 @@ def create_gluster_volume(data, bricklist, hostlist):
             # No need to send it to host which we already tried
             hostlist.remove(host)
             for host in hostlist:
+                log.debug("Re trying with Host: %s" % host)
                 rc = salt_wrapper.create_gluster_volume(
                     host, data['volume_name'], bricks, stripe=0,
                     replica=data['replica_count'], transport=[], force=True)
-                if rc is True:
-                    return rc
+                if rc:
+                    return True
                     break
-            return rc
+                log.debug("Request failed with Host: %s" % host)
+            return False
         else:
             return False
     except Exception, e:
@@ -503,7 +547,7 @@ def add_volume_bricks(volume, bricklist):
         if hostlist:
             host = random.choice(hostlist)
             log.debug("Host: %s" % host)
-            rc = salt_wrapper.add_volume_bricks(
+            rc = salt_wrapper.add_gluster_bricks(
                 host, volume.volume_name, bricks, force=True)
             if rc is True:
                 return rc
@@ -516,7 +560,7 @@ def add_volume_bricks(volume, bricklist):
             # No need to send it to host which we already tried
             hostlist.remove(host)
             for host in hostlist:
-                rc = salt_wrapper.add_volume_bricks(
+                rc = salt_wrapper.add_gluster_bricks(
                     host, volume.volume_name, bricks, force=True)
                 if rc is True:
                     return rc
@@ -534,6 +578,7 @@ def create_gluster_brick(bricklist):
     # create the Volume
     failed = []
     for brick in bricklist:
+        storage_device = None
         try:
             host = Host.objects.get(pk=str(brick['node']))
             if host:
@@ -553,6 +598,19 @@ def create_gluster_brick(bricklist):
         except Exception, e:
             log.exception(e)
             failed.append(brick)
+        # Mark the INUSE to True
+        # TODO: Right now marking all disks in the list
+        # because we are not sure about the reason of failure
+        # Need to write a sync function which does the job
+        # cleanly
+        try:
+            storage_device.inuse = True
+            storage_device.save()
+        except Exception, e:
+            log.exception(e)
+            log.critical(
+                "Setting Inuse Flag failed for %s" % brick['storage_device'])
+
     return failed
 
 
