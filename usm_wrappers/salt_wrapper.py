@@ -140,6 +140,17 @@ def get_machine_id(minion_id):
     return out.get(minion_id, {}).get('machine_id')
 
 
+def get_minion_installed_storage(minion):
+    out = local.cmd(minion, 'pkg.list_pkgs')
+    pkgs = out.get(minion, {})
+    if pkgs.get('glusterfs-server'):
+        return 'GLUSTER'
+    elif pkgs.get('ceph'):
+        return 'CEPH'
+    else:
+        return 'UNKNOWN'
+
+
 def get_minion_network_info(minions):
     out = local.cmd(minions, ['grains.item', 'network.subnets'],
                     [['ipv4', 'ipv6'], []], expr_form='list')
