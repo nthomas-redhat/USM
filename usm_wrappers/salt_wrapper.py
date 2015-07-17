@@ -5,6 +5,8 @@ import time
 import fnmatch
 import os
 import json
+import logging
+from functools import wraps
 
 import salt
 from salt import wheel, client
@@ -15,15 +17,32 @@ import salt.runner
 import utils
 
 
+log = logging.getLogger(__name__)
 opts = salt.config.master_config('/etc/salt/master')
 master = salt.wheel.WheelClient(opts)
-local = salt.client.LocalClient()
 sevent = salt.utils.event.get_event('master',
                                     sock_dir=opts['sock_dir'],
                                     transport=opts['transport'],
                                     opts=opts)
 runner = salt.runner.RunnerClient(opts)
 DEFAULT_WAIT_TIME = 5
+
+
+def enableLogger(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print 'args=%s, kwargs=%s' % (args, kwargs)
+        log.info('args=%s, kwargs=%s' % (args, kwargs))
+        rv = func(*args, **kwargs)
+        print 'rv=%s' % rv
+        log.info('rv=%s' % rv)
+        return rv
+    return wrapper
+
+
+setattr(salt.client.LocalClient, 'cmd',
+        enableLogger(salt.client.LocalClient.cmd))
+local = salt.client.LocalClient()
 
 
 def _get_state_result(out):
@@ -119,6 +138,17 @@ def get_started_minions(minions=[], timeout=60):
 def get_machine_id(minion_id):
     out = local.cmd(minion_id, 'grains.item', ['machine_id'])
     return out.get(minion_id, {}).get('machine_id')
+
+
+def get_minion_installed_storage(minion):
+    out = local.cmd(minion, 'pkg.list_pkgs')
+    pkgs = out.get(minion, {})
+    if pkgs.get('glusterfs-server'):
+        return 'GLUSTER'
+    elif pkgs.get('ceph'):
+        return 'CEPH'
+    else:
+        return 'UNKNOWN'
 
 
 def get_minion_network_info(minions):
