@@ -533,6 +533,19 @@ class GlusterVolumeViewSet(viewsets.ModelViewSet):
             return Response(
                 {'message': 'Error while Stopping the Volume'}, status=417)
 
+    @detail_route(methods=['get'],
+                  permission_classes=[permissions.IsAuthenticated])
+    def utilization(self, request, pk=None):
+        log.debug("Inside get volumes utilization")
+        try:
+            usage = usm_rest_utils.get_volume_usage(pk)
+            return Response(usage, status=200)
+        except Exception, e:
+            log.exception(e)
+            return Response(
+                {'message': 'Error while Getting volume Usage Info'},
+                status=417)
+
 
 class GlusterBrickViewSet(viewsets.ModelViewSet):
     """

@@ -62,7 +62,7 @@ class Cluster(models.Model):
     cluster_status = models.SmallIntegerField(
         choices=STATUS_CHOICES, blank=True, null=True,
         default=STATUS_CREATING)
-
+    used = models.BigIntegerField(blank=True, null=True, default=0)
     created = models.DateTimeField(auto_now_add=True)
     last_modified = models.DateTimeField(auto_now=True)
 
@@ -221,7 +221,7 @@ class CephPool(models.Model):
     pool_id = UUIDField(auto=True, primary_key=True)
     pool_name = models.CharField(max_length=40)
     cluster = models.ForeignKey(Cluster)
-    pool_size = models.SmallIntegerField(default=0)
+    pool_size = models.SmallIntegerField(default=3)
     pg_num = models.SmallIntegerField(default=128)
     min_pool_size = models.SmallIntegerField(default=0)
     pgp_num = models.SmallIntegerField(default=0)

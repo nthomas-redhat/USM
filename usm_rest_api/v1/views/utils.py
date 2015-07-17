@@ -536,6 +536,48 @@ def delete_gluster_volume(volume_id):
         raise
 
 
+def get_volume_usage(volume_id):
+    try:
+        volume = GlusterVolume.objects.get(pk=str(volume_id))
+        hostlist = Host.objects.filter(
+            cluster_id=str(volume.cluster_id))
+        hostlist = [item.node_name for item in hostlist]
+        log.debug("Hostlist: %s" % hostlist)
+        if hostlist:
+            host = random.choice(hostlist)
+            log.debug("Host: %s" % host)
+
+            usage = salt_wrapper.get_gluster_volume_usage(
+                host, volume.volume_name)
+            if 'exception' not in usage:
+                return usage
+            #
+            # random host is not able to execute command
+            # Now try to iterate through the list of hosts
+            # in the cluster until
+            # the execution is successful
+
+            # No need to send it to host which we already tried
+            log.debug("Sending the request failed with host: %s" % host)
+            hostlist.remove(host)
+            for host in hostlist:
+                usage = salt_wrapper.get_gluster_volume_usage(
+                host, volume.volume_name)
+                if 'exception' not in usage:
+                    return usage
+                    break
+                log.debug("Sending the request failed with host: %s" % host)
+            if 'exception' in usage:
+                log.critical(
+                    "Get volume usage failed: %s" % volume.volume_name)
+            return usage
+        else:
+           return "No Hosts available to get volume usage"
+    except Exception, e:
+        log.exception(e)
+        raise
+
+
 def add_volume_bricks(volume, bricklist):
     # Add Bricks
     try:

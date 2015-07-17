@@ -53,7 +53,7 @@ def createCephCluster(cluster_data):
         [item['node_name'] for item in nodelist],
         cluster_data)
     if failed_minions:
-        #reload the salt_wrapper to refresh connections
+        # reload the salt_wrapper to refresh connections
         reload(salt_wrapper)
         # Retry couple of times
         for count in range(0, 3):
@@ -167,7 +167,7 @@ def createGlusterCluster(cluster_data):
         [item['node_name'] for item in nodelist],
         cluster_data)
     if failed_minions:
-        #reload the salt_wrapper to refresh connections
+        # reload the salt_wrapper to refresh connections
         reload(salt_wrapper)
         # Retry couple of times
         for count in range(0, 3):
@@ -279,7 +279,7 @@ def createCephHost(data):
         [item['node_name'] for item in [data]],
         cluster_data)
     if failed_minions:
-        #reload the salt_wrapper to refresh connections
+        # reload the salt_wrapper to refresh connections
         reload(salt_wrapper)
         # Retry couple of times
         for count in range(0, 3):
@@ -380,7 +380,7 @@ def createGlusterHost(data):
         [item['node_name'] for item in [data]],
         cluster_data)
     if failed_minions:
-        #reload the salt_wrapper to refresh connections
+        # reload the salt_wrapper to refresh connections
         reload(salt_wrapper)
         # Retry couple of times
         for count in range(0, 3):
@@ -543,6 +543,17 @@ def createGlusterVolume(data):
         log.exception(e)
         raise usm_rest_utils.VolumeCreationFailed(
             data, str(bricks), "Unable to update the DB")
+
+    # Start the volume
+    log.debug("Starting the volume: %s" % data['volume_name'])
+    rc = usm_rest_utils.start_gluster_volume(uuid)
+    if rc is True:
+        log.debug("Successfully started the volume")
+    else:
+        log.critical("Starting the volume failed for the volume %s" % data['volume_name'])
+        raise usm_rest_utils.VolumeCreationFailed(
+            data, str(bricks), "Starting the volume failed")
+
     return {'state': 'SUCCESS'}
 
 
@@ -658,7 +669,7 @@ def createCephPool(data):
                 if pool['pg_num'] is None:
                     pool['pg_num'] = 128
             else:
-               pool['pg_num'] = 128
+                pool['pg_num'] = 128
 
             result = salt_wrapper.create_ceph_pool(
                 monitor.node_name, monitor.cluster.cluster_name,

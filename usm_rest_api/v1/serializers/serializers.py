@@ -194,4 +194,4 @@ class ClusterSerializer(serializers.ModelSerializer):
         fields = ('cluster_id', 'cluster_name', 'description',
                   'compatibility_version', 'cluster_type',
                   'storage_type', 'cluster_status', 'hosts', 'volumes',
-                  'osds', 'pools')
+                  'osds', 'pools', 'used')
