@@ -14,6 +14,7 @@ router.register(r'host-interfaces', v1_views.HostInterfaceViewSet)
 router.register(r'ceph/osds', v1_views.CephOSDViewSet)
 router.register(r'gluster/volumes', v1_views.GlusterVolumeViewSet)
 router.register(r'gluster/bricks', v1_views.GlusterBrickViewSet)
+router.register(r'ceph/pools', v1_views.CephPoolViewSet)
 
 
 urlpatterns = patterns('',
@@ -42,4 +43,5 @@ urlpatterns = patterns('',
                            celery_views.registered_tasks,
                            name='celery-tasks'),
                        url(r'^utils/validate-host', v1_views.validate_host),
+                       url(r'^utils/accept-hosts', v1_views.accept_hosts),
                        url(r'^', include(router.urls)),)

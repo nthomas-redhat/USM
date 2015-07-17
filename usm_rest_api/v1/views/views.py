@@ -17,6 +17,7 @@ from rest_framework import viewsets, mixins
 from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import detail_route
+from rest_framework.decorators import list_route
 
 from usm_rest_api.v1.serializers.serializers import UserSerializer
 from usm_rest_api.models import Cluster
@@ -35,6 +36,8 @@ from usm_rest_api.v1.serializers.serializers import GlusterBrickSerializer
 from usm_rest_api.models import GlusterBrick
 from usm_rest_api.v1.serializers.serializers import GlusterVolumeSerializer
 from usm_rest_api.models import GlusterVolume
+from usm_rest_api.v1.serializers.serializers import CephPoolSerializer
+from usm_rest_api.models import CephPool
 
 from usm_wrappers import utils as usm_wrapper_utils
 
@@ -201,6 +204,40 @@ to the cluster by POSTing a message as follows:
         return Response({})
 
 
+@api_view(['GET', 'POST'])
+@permission_classes((IsAuthenticated,))
+def accept_hosts(request):
+    """
+The resource is used to setup the salt communication and
+add the host to USM by POSTing a message as follows:
+
+::
+
+    "nodes": [
+          {
+              "node_name": "NAME",
+              "management_ip": "ADDR",
+              "ssh_username": "USER",
+              "ssh_password": "PASS",
+              "ssh_key_fingerprint": "FINGER",
+              "ssh_port": 22,
+          },
+          {
+
+          } ]:
+
+    """
+    log.debug(
+        "Inside accept_hosts. Request Data: %s" % request.data)
+    if request.method == 'POST':
+        data = copy.deepcopy(request.data.copy())
+        jobId = tasks.acceptHosts.delay(data)
+        log.debug("Exiting ... JobID: %s" % jobId)
+        return Response(str(jobId), status=202)
+    else:
+        return Response({})
+
+
 class ClusterViewSet(viewsets.ModelViewSet):
     """
       The resource is used to manage a cluster with a list of hosts. Cluster
@@ -216,10 +253,6 @@ class ClusterViewSet(viewsets.ModelViewSet):
               "management_ip": "ADDR",
               "cluster_ip": "ADDR",
               "public_ip": "ADDR",
-              "ssh_username": "USER",
-              "ssh_password": "PASS",
-              "ssh_key_fingerprint": "FINGER",
-              "ssh_port": 22,
               "node_type": "nodetype"
           },
           {
@@ -367,6 +400,19 @@ class DiscoveredNodeViewSet(mixins.RetrieveModelMixin,
     queryset = DiscoveredNode.objects.all()
     serializer_class = DiscoveredNodeSerializer
 
+    @list_route(methods=['post', 'get'],
+                permission_classes=[permissions.IsAuthenticated],
+                url_path='accept-hosts')
+    def accept_hosts(self, request):
+        if request.method == 'POST':
+            log.debug("Inside accept hosts. Request Data: %s" % request.data)
+            data = copy.deepcopy(request.data.copy())
+            jobId = tasks.acceptHosts.delay(data)
+            log.debug("Exiting ... JobID: %s" % jobId)
+            return Response(str(jobId), status=202)
+        elif request.method == 'GET':
+            return Response({})
+
 
 class HostInterfaceViewSet(mixins.RetrieveModelMixin,
                            mixins.ListModelMixin,
@@ -380,7 +426,19 @@ class HostInterfaceViewSet(mixins.RetrieveModelMixin,
 
 class CephOSDViewSet(viewsets.ModelViewSet):
     """
-    Host interfaces information.
+      The resource is used to manage a Ceph OSDs.
+      OSD can be created by posting a message as follows:
+
+      {
+        "osds": [
+          {
+              "node": "node uuid",
+              "storage_device": "storage_device uuid"
+          },
+          {
+
+          } ]
+      }
     """
     queryset = CephOSD.objects.all()
     serializer_class = CephOSDSerializer
@@ -490,4 +548,33 @@ class GlusterBrickViewSet(viewsets.ModelViewSet):
         data = copy.deepcopy(request.data.copy())
         jobId = tasks.createGlusterBrick.delay(data)
         log.debug("Exiting ... JobID: %s" % jobId)
-        return Response(str(jobId), status=201)
+        return Response(str(jobId), status=202)
+
+
+class CephPoolViewSet(viewsets.ModelViewSet):
+    """
+      The resource is used to manage a Ceph Pools.
+      Pool can be created by posting a message as follows:
+
+      {
+        "cluster": "cluster uuid"
+        "pools": [
+          {
+              "pool_name": "Name of the pool to be created",
+              "pg_num": "pg number"
+          },
+          {
+
+          } ]
+      }
+    """
+    queryset = CephPool.objects.all()
+    serializer_class = CephPoolSerializer
+
+    def create(self, request):
+        log.debug(
+            "Inside CephPoolViewSet Create. Request Data: %s" % request.data)
+        data = copy.deepcopy(request.data.copy())
+        jobId = tasks.createCephPool.delay(data)
+        log.debug("Exiting ... JobID: %s" % jobId)
+        return Response(str(jobId), status=202)

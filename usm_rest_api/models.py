@@ -40,15 +40,19 @@ class Cluster(models.Model):
     STATUS_INACTIVE = 1
     STATUS_ACTIVE_NOT_AVAILABLE = 2
     STATUS_ACTIVE_AND_AVAILABLE = 3
+    STATUS_CREATING = 4
+    STATUS_FAILED = 5
 
     STATUS_CHOICES = (
         (STATUS_INACTIVE, _('Inactive')),
         (STATUS_ACTIVE_NOT_AVAILABLE, _('Active but Not Available')),
         (STATUS_ACTIVE_AND_AVAILABLE, _('Active and Available')),
+        (STATUS_CREATING, _('Creating')),
+        (STATUS_FAILED, _('Failed')),
     )
 
     cluster_id = UUIDField(auto=False, primary_key=True)
-    cluster_name = models.CharField(max_length=40)
+    cluster_name = models.CharField(max_length=40, unique=True)
     description = models.CharField(
         max_length=4000, blank=True, null=True, default='')
     compatibility_version = models.CharField(
@@ -57,7 +61,7 @@ class Cluster(models.Model):
     storage_type = models.SmallIntegerField(choices=STORAGE_TYPE_CHOICES)
     cluster_status = models.SmallIntegerField(
         choices=STATUS_CHOICES, blank=True, null=True,
-        default=STATUS_INACTIVE)
+        default=STATUS_CREATING)
 
     created = models.DateTimeField(auto_now_add=True)
     last_modified = models.DateTimeField(auto_now=True)
@@ -73,11 +77,13 @@ class Host(models.Model):
     HOST_TYPE_OSD = 2
     HOST_TYPE_MIXED = 3
     HOST_TYPE_GLUSTER = 4
+    HOST_TYPE_DEFAULT = 5
     HOST_TYPE_CHOICES = (
         (HOST_TYPE_MONITOR, _('Monitor Host')),
         (HOST_TYPE_OSD, _('OSD Host')),
         (HOST_TYPE_MIXED, _('OSD and Monitor')),
         (HOST_TYPE_GLUSTER, _('Gluster Host')),
+        (HOST_TYPE_DEFAULT, _('Default')),
     )
 
     HOST_STATUS_INACTIVE = 1
@@ -92,10 +98,14 @@ class Host(models.Model):
     description = models.CharField(
         max_length=4000, blank=True, null=True, default='')
     management_ip = models.CharField(max_length=255)
-    cluster_ip = models.CharField(max_length=255)
-    public_ip = models.CharField(max_length=255)
-    cluster = models.ForeignKey(Cluster)
-    node_type = models.SmallIntegerField(choices=HOST_TYPE_CHOICES)
+    cluster_ip = models.CharField(
+        max_length=255, blank=True, null=True, default=None)
+    public_ip = models.CharField(
+        max_length=255, blank=True, null=True, default=None)
+    cluster = models.ForeignKey(
+        Cluster, blank=True, null=True, default=None)
+    node_type = models.SmallIntegerField(choices=HOST_TYPE_CHOICES,
+                                         default=HOST_TYPE_DEFAULT)
     node_status = models.SmallIntegerField(
         choices=HOST_STATUS_CHOICES, blank=True, null=True,
         default=HOST_STATUS_INACTIVE)
@@ -104,6 +114,10 @@ class Host(models.Model):
 
     def __str__(self):
         return self.node_name
+
+    @property
+    def get_cluster_name(self):
+        return self.cluster
 
 
 class StorageDevice(models.Model):
@@ -134,6 +148,9 @@ class DiscoveredNode(models.Model):
     node_name = models.CharField(max_length=40)
     management_ip = models.CharField(max_length=255)
 
+    def __str__(self):
+        return self.node_name
+
 
 class HostInterface(models.Model):
     interface_id = UUIDField(auto=True, primary_key=True)
@@ -153,7 +170,8 @@ class CephOSD(models.Model):
     osd_id = UUIDField(auto=True, primary_key=True)
     node = models.ForeignKey(Host)
     storage_device = models.ForeignKey(StorageDevice)
-    osd_status = models.SmallIntegerField(choices=GEN_STATUS_CHOICES)
+    osd_status = models.SmallIntegerField(choices=GEN_STATUS_CHOICES,
+                                          default=STATUS_CREATED)
 
 
 class GlusterVolume(models.Model):
@@ -176,7 +194,14 @@ class GlusterVolume(models.Model):
     replica_count = models.SmallIntegerField(default=0)
     stripe_count = models.SmallIntegerField(default=0)
     volume_status = models.SmallIntegerField(
-        choices=GEN_STATUS_CHOICES, default=4)
+        choices=GEN_STATUS_CHOICES, default=STATUS_CREATED)
+
+    def __str__(self):
+        return self.volume_name
+
+    @property
+    def get_cluster_name(self):
+        return self.cluster
 
 
 class GlusterBrick(models.Model):
@@ -187,3 +212,25 @@ class GlusterBrick(models.Model):
     storage_device = models.ForeignKey(StorageDevice)
     brick_status = models.SmallIntegerField(
         choices=GEN_STATUS_CHOICES, default=3)
+
+    def __str__(self):
+        return self.brick_path
+
+
+class CephPool(models.Model):
+    pool_id = UUIDField(auto=True, primary_key=True)
+    pool_name = models.CharField(max_length=40)
+    cluster = models.ForeignKey(Cluster)
+    pool_size = models.SmallIntegerField(default=0)
+    pg_num = models.SmallIntegerField(default=128)
+    min_pool_size = models.SmallIntegerField(default=0)
+    pgp_num = models.SmallIntegerField(default=0)
+    quota_max_objects = models.SmallIntegerField(default=0)
+    quota_max_bytes = models.SmallIntegerField(default=0)
+
+    def __str__(self):
+        return self.pool_name
+
+    @property
+    def get_cluster_name(self):
+        return self.cluster

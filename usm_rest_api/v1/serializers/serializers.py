@@ -10,6 +10,7 @@ from usm_rest_api.models import HostInterface
 from usm_rest_api.models import CephOSD
 from usm_rest_api.models import GlusterVolume
 from usm_rest_api.models import GlusterBrick
+from usm_rest_api.models import CephPool
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -61,7 +62,7 @@ class StorageDeviceSerializer(serializers.ModelSerializer):
         fields = ('storage_device_id', 'storage_device_name', 'device_uuid',
                   'filesystem_uuid', 'node', 'description', 'device_type',
                   'device_path', 'filesystem_type', 'device_mount_point',
-                  'size','inuse')
+                  'size', 'inuse')
 
 
 class HostInterfaceSerializer(serializers.ModelSerializer):
@@ -107,12 +108,29 @@ class GlusterVolumeSerializer(serializers.ModelSerializer):
     Used to expose a usm-rest-api GlusterVolume management resource.
     """
     bricks = GlusterBrickSerializer(many=True, read_only=True)
+    cluster_name = serializers.CharField(
+        read_only=True, source='get_cluster_name')
 
     class Meta:
         model = GlusterVolume
         fields = ('volume_id', 'cluster', 'volume_name',
                   'volume_type', 'replica_count',
-                  'stripe_count', 'volume_status', 'bricks')
+                  'stripe_count', 'volume_status', 'bricks', 'cluster_name')
+
+
+class CephPoolSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the Discovered_Nodes model.
+
+    Used to expose a usm-rest-api Discovered_Nodes management resource.
+    """
+    cluster_name = serializers.CharField(
+        read_only=True, source='get_cluster_name')
+    class Meta:
+        model = CephPool
+        fields = ('pool_id', 'pool_name', 'cluster', 'pool_size', 'pg_num',
+                  'min_pool_size', 'pgp_num', 'quota_max_objects',
+                  'quota_max_bytes', 'cluster_name')
 
 
 class HostSerializer(serializers.ModelSerializer):
@@ -121,8 +139,8 @@ class HostSerializer(serializers.ModelSerializer):
 
     Used to expose a usm-rest-api Host management resource.
     """
-    cluster = serializers.PrimaryKeyRelatedField(
-        queryset=Cluster.objects.all())
+    # cluster = serializers.PrimaryKeyRelatedField(
+    #    queryset=Cluster.objects.all())
     storageDevices = StorageDeviceSerializer(many=True, read_only=True)
     hostInterfaces = HostInterfaceSerializer(many=True, read_only=True)
     osds = CephOSDSerializer(many=True, read_only=True)
@@ -137,6 +155,8 @@ class HostSerializer(serializers.ModelSerializer):
         allow_null=True)
     ssh_password = serializers.CharField(
         write_only=True, max_length=255, required=False, allow_null=True)
+    cluster_name = serializers.CharField(
+        read_only=True, source='get_cluster_name')
 
     class Meta:
         model = Host
@@ -144,7 +164,7 @@ class HostSerializer(serializers.ModelSerializer):
                   'cluster_ip', 'public_ip', 'cluster', 'ssh_username',
                   'ssh_port', 'ssh_key_fingerprint', 'ssh_password',
                   'node_type', 'node_status', 'storageDevices',
-                  'hostInterfaces', 'osds', 'bricks')
+                  'hostInterfaces', 'osds', 'bricks', 'cluster_name')
 
 
 class DiscoveredNodeSerializer(serializers.ModelSerializer):
@@ -166,9 +186,12 @@ class ClusterSerializer(serializers.ModelSerializer):
     """
     hosts = HostSerializer(many=True, read_only=True)
     volumes = GlusterVolumeSerializer(many=True, read_only=True)
+    osds = CephOSDSerializer(many=True, read_only=True)
+    pools = CephPoolSerializer(many=True, read_only=True)
 
     class Meta:
         model = Cluster
         fields = ('cluster_id', 'cluster_name', 'description',
                   'compatibility_version', 'cluster_type',
-                  'storage_type', 'cluster_status', 'hosts', 'volumes')
+                  'storage_type', 'cluster_status', 'hosts', 'volumes',
+                  'osds', 'pools')
