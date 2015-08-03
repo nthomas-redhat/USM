@@ -8,7 +8,7 @@ RED='\033[0;33m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-USM_HOME=pwd
+USM_HOME=`pwd`
 
 printf "${GREEN}Installing necissary packages for USM${NC}\n"
 
@@ -16,7 +16,8 @@ set -x
 
 yum -y install python-django python-django-celery python-django-extensions python-django-bash-completion python-django-filter python-paramiko redis python-redis salt-master postgresql postgresql-server postgresql-devel postgresql-libs postgresql-contrib python-psycopg2 python-netaddr python-cpopen python-gevent python-pip python-devel git
 
-pip install djangorestframework psycogreen celery
+pip install djangorestframework psycogreen
+pip install celery --upgrade
 
 # Initialize the DB
 

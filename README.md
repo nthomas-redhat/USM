@@ -161,9 +161,9 @@ Install Script
 
 Alternatively Setup on a fresh machine can be done using install.sh script
 available in this repo. This script takes care of:
-*installing the necessary packages.
-*setting up the DB
-*setting up the USM app
-*setting up celery, salt and redis.
+* Installing the necessary dependent packages.
+* Setting up the Database
+* Setting up the USM app
+* Setting up celery, salt and redis.
 
 This script has been tested on Fedora-22.
