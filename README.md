@@ -45,7 +45,8 @@ gevent==1.0.1
 
 psycogreen==1.0
 
-
+NOTE: few of the packages like djangorestframework, psycogreen are not available through yum,
+they have to be installed using pip tool.
 
 SETUP
 ------
@@ -79,7 +80,7 @@ create user - createuser -P usm
 
 go to the SQL prompt - psql
 
-Grant the db privileges newly created user - GRANT ALL PRIVILEGES ON DATABASE usm TO usm
+Grant the db privileges newly created user - GRANT ALL PRIVILEGES ON DATABASE usm TO usm;
 
 Start the salt service
 ----------------------
