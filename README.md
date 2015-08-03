@@ -45,7 +45,8 @@ gevent==1.0.1
 
 psycogreen==1.0
 
-
+NOTE: few of the packages like djangorestframework, psycogreen are not available through yum,
+they have to be installed using pip tool.
 
 SETUP
 ------
@@ -79,7 +80,7 @@ create user - createuser -P usm
 
 go to the SQL prompt - psql
 
-Grant the db privileges newly created user - GRANT ALL PRIVILEGES ON DATABASE usm TO usm
+Grant the db privileges newly created user - GRANT ALL PRIVILEGES ON DATABASE usm TO usm;
 
 Start the salt service
 ----------------------
@@ -154,3 +155,15 @@ python manage.py runserver IPAddress:PORT
 Access the usm application using -
 
 http://IPADDRESS:PORT/
+
+Install Script
+--------------
+
+Alternatively Setup on a fresh machine can be done using install.sh script
+available in this repo. This script takes care of:
+*installing the necessary packages.
+*setting up the DB
+*setting up the USM app
+*setting up celery, salt and redis.
+
+This script has been tested on Fedora-22.
