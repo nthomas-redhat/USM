@@ -4,17 +4,17 @@ set -e
 
 # Package installation
 
-RED='\033[0;33m'
+YELLOW='\033[0;33m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
 USM_HOME=`pwd`
 
-printf "${GREEN}Installing necissary packages for USM${NC}\n"
+printf "${GREEN}Installing necessary packages for USM${NC}\n"
 
 set -x
 
-yum -y install python-django python-django-celery python-django-extensions python-django-bash-completion python-django-filter python-paramiko redis python-redis salt-master postgresql postgresql-server postgresql-devel postgresql-libs postgresql-contrib python-psycopg2 python-netaddr python-cpopen python-gevent python-pip python-devel git
+yum -y install python-django python-django-celery python-django-extensions python-django-bash-completion python-django-filter python-paramiko redis python-redis salt-master postgresql postgresql-server postgresql-devel postgresql-libs postgresql-contrib python-psycopg2 python-netaddr python-cpopen python-gevent python-pip python-devel
 
 pip install djangorestframework psycogreen
 pip install celery --upgrade
@@ -144,7 +144,7 @@ yes |cp $USM_HOME/usm_wrappers/*.sls /srv/salt
 
 set +x
 
-printf "${RED}Please Make Suitable Firewall settings by unblocking 4505-4506 ports for communication with salt and your HTTP port used for USM....${NC}\n"
+printf "${YELLOW}Please Make Suitable Firewall settings by unblocking 4505-4506 ports for communication with salt and your HTTP port used for USM....${NC}\n"
 
 printf "${GREEN}You Can start the USM application by running following command in $USM_HOME dir\nCommand: python manage.py runserver IPAddress:PORT${NC}\n"
 
