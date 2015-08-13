@@ -14,7 +14,7 @@ printf "${GREEN}Installing necessary packages for USM${NC}\n"
 
 set -x
 
-yum -y install python-django python-django-celery python-django-extensions python-django-bash-completion python-django-filter python-paramiko redis python-redis salt-master postgresql postgresql-server postgresql-devel postgresql-libs postgresql-contrib python-psycopg2 python-netaddr python-cpopen python-gevent python-pip python-devel
+yum -y install python-django python-django-celery python-django-extensions python-django-bash-completion python-django-filter python-paramiko redis python-redis salt-master postgresql postgresql-server postgresql-devel postgresql-libs postgresql-contrib python-psycopg2 python-netaddr python-cpopen python-gevent python-pip python-devel wget tar
 
 pip install djangorestframework psycogreen
 pip install celery --upgrade
@@ -144,9 +144,34 @@ yes |cp $USM_HOME/usm_wrappers/*.sls /srv/salt
 
 set +x
 
-printf "${YELLOW}Please Make Suitable Firewall settings by unblocking 4505-4506 ports for communication with salt and your HTTP port used for USM....${NC}\n"
+while true; do
+    read -p "Do you wish to install USM-UI [Y/N]:" yn
+    case $yn in
+        [YyNn]* ) break;;
+        * ) echo "Please answer Y or N.";;
+    esac
+done
 
-printf "${GREEN}You Can start the USM application by running following command in $USM_HOME dir\nCommand: python manage.py runserver IPAddress:PORT${NC}\n"
+if [ $yn = "Y" -o $yn = "y" ]
+then
+    printf "${GREEN}Downloading and installing usm-client...${NC}\n"
+    set -x
+    wget http://github.com/kmkanagaraj/usm-client/releases/download/0.0.1/usm-client-0.0.1.tar.gz
+    mkdir static
+    tar -xzf usm-client-0.0.1.tar.gz -C static/
 
-printf "${GREEN}Access the application using http://IPADDRESS:PORT/api/v1${NC}\n"
+    set +x
+    printf "${YELLOW}Please Make Suitable Firewall settings by unblocking 4505-4506 ports for communication with salt and your HTTP port used for USM....${NC}\n"
 
+    printf "${GREEN}You Can start the USM application by running following command in $USM_HOME dir\nCommand: python manage.py runserver IPAddress:PORT${NC}\n"
+
+    printf "${GREEN}Access the application using http://IPADDRESS:PORT/static/index.html${NC}\n"
+else
+    set +x
+
+    printf "${YELLOW}Please Make Suitable Firewall settings by unblocking 4505-4506 ports for communication with salt and your HTTP port used for USM....${NC}\n"
+
+    printf "${GREEN}You Can start the USM application by running following command in $USM_HOME dir\nCommand: python manage.py runserver IPAddress:PORT${NC}\n"
+
+    printf "${GREEN}Access the application using http://IPADDRESS:PORT/api/v1${NC}\n"
+fi
