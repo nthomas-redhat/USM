@@ -68,8 +68,8 @@ If authentication is successful, 200 is returned, if it is unsuccessful
 then 401 is returend.
     """
     if request.method == 'POST':
-        username = request.DATA.get('username', None)
-        password = request.DATA.get('password', None)
+        username = request.data.get('username', None)
+        password = request.data.get('password', None)
         msg = {}
         if not username:
             msg['username'] = 'This field is required'
